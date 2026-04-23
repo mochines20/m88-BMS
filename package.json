@@ -1,0 +1,22 @@
+{
+  "name": "bms-netlify",
+  "version": "1.0.0",
+  "description": "Madison88 Budget Management System - Netlify Deployment",
+  "scripts": {
+    "build": "cd frontend && npm run build",
+    "dev": "cd frontend && npm run dev",
+    "seed:supabase": "node scripts/seed-supabase.js",
+    "verify:smtp": "node scripts/verify-smtp.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.104.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "exceljs": "^4.3.0",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^6.9.1",
+    "pdfkit": "^0.13.0"
+  }
+}

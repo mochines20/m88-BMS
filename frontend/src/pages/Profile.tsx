@@ -1,0 +1,157 @@
+import { useEffect, useMemo, useState } from 'react';
+import api from '../api';
+import toast from 'react-hot-toast';
+
+interface DepartmentOption {
+  id: string;
+  name: string;
+  fiscal_year?: number;
+}
+
+const Profile = () => {
+  const [user, setUser] = useState<any>(null);
+  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  const [name, setName] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const token = localStorage.getItem('token');
+  const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
+
+  useEffect(() => {
+    const loadProfile = async () => {
+      try {
+        const [meResponse, departmentsResponse] = await Promise.all([
+          api.get('/api/auth/me', { headers: authHeaders }),
+          api.get<DepartmentOption[]>('/api/auth/signup-departments')
+        ]);
+
+        setUser(meResponse.data);
+        setName(meResponse.data.name || '');
+        setDepartmentId(meResponse.data.department_id || '');
+        setDepartments(departmentsResponse.data || []);
+      } catch (err: any) {
+        toast.error(err.response?.data?.error || 'Failed to load profile');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    void loadProfile();
+  }, [authHeaders]);
+
+  const handleSave = async () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      toast.error('Name is required');
+      return;
+    }
+
+    if (!departmentId) {
+      toast.error('Please select a department');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const response = await api.patch(
+        '/api/auth/profile',
+        {
+          name: trimmedName,
+          department_id: departmentId
+        },
+        { headers: authHeaders }
+      );
+
+      localStorage.setItem('token', response.data.token);
+      setUser(response.data.user);
+      setName(response.data.user.name || trimmedName);
+      setDepartmentId(response.data.user.department_id || departmentId);
+      toast.success('Profile updated!');
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to update profile');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (isLoading) {
+    return <div className="text-white">Loading profile...</div>;
+  }
+
+  if (!user) {
+    return <div className="text-white">Profile not available.</div>;
+  }
+
+  if (user.role !== 'employee' && user.role !== 'supervisor') {
+    return (
+      <div className="panel text-white">
+        <h1 className="page-title text-3xl">Profile</h1>
+        <p className="mt-3 text-[#D9E1F1]/78">Department self-edit is currently available for employees and supervisors only.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-white">
+      <div className="page-header">
+        <h1 className="page-title">My Profile</h1>
+        <p className="page-subtitle">Update your display name and department assignment so your request flow stays aligned.</p>
+      </div>
+
+      <div className="panel max-w-3xl">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+          <div className="panel-muted">
+            <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/58">Role</p>
+            <p className="mt-3 text-xl font-semibold text-white capitalize">{user.role}</p>
+            <p className="mt-2 text-sm text-[#D9E1F1]/70">{user.email}</p>
+          </div>
+          <div className="panel-muted">
+            <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/58">Department Update</p>
+            <p className="mt-3 text-sm text-[#D9E1F1]/76">Any change here will affect which department requests you see and submit under.</p>
+          </div>
+        </div>
+
+        <div className="mt-6 space-y-5">
+          <div className="rounded-[24px] border border-[#8FB3E2]/10 bg-[#192338]/28 p-4">
+            <p className="text-sm font-semibold text-white">Department Change Notice</p>
+            <p className="mt-2 text-sm text-[#D9E1F1]/76">
+              Changing department will also move your existing requests to the new department.
+            </p>
+          </div>
+
+          <div>
+            <label className="field-label">Full Name</label>
+            <input
+              className="field-input"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Enter your full name"
+            />
+          </div>
+
+          <div>
+            <label className="field-label">Department</label>
+            <select className="field-input" value={departmentId} onChange={(event) => setDepartmentId(event.target.value)}>
+              <option value="">Select your department</option>
+              {departments.map((department) => (
+                <option key={department.id} value={department.id}>
+                  {department.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <button className="btn-primary" onClick={handleSave} disabled={isSaving}>
+              {isSaving ? 'Saving...' : 'Save Profile'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Profile;

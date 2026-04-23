@@ -1,0 +1,333 @@
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    @apply bg-[#192338];
+  }
+
+  body {
+    @apply min-h-screen bg-[radial-gradient(circle_at_top,_rgba(143,179,226,0.18),_transparent_28%),linear-gradient(180deg,_#192338_0%,_#1E2F4F_48%,_#192338_100%)] text-[#D9E1F1] antialiased;
+    font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    @apply text-white;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: rgba(143, 179, 226, 0.7);
+  }
+
+  select option {
+    @apply bg-[#192338] text-[#D9E1F1];
+  }
+
+  ::selection {
+    background-color: rgba(143, 179, 226, 0.4);
+    @apply text-white;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: rgba(25, 35, 56, 0.92);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(143, 179, 226, 0.28);
+    border-radius: 9999px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .app-shell {
+    @apply min-h-screen bg-[radial-gradient(circle_at_top,_rgba(143,179,226,0.16),_transparent_25%),radial-gradient(circle_at_bottom_right,_rgba(49,72,122,0.24),_transparent_22%),linear-gradient(180deg,_#192338_0%,_#1E2F4F_42%,_#192338_100%)];
+    animation: appAmbient 18s ease-in-out infinite alternate;
+  }
+
+  .page-header {
+    @apply mb-8 space-y-2;
+  }
+
+  .page-title {
+    @apply text-4xl font-bold tracking-tight text-white md:text-5xl;
+  }
+
+  .page-subtitle {
+    @apply max-w-3xl text-base md:text-lg;
+    color: rgba(217, 225, 241, 0.8);
+  }
+
+  .panel {
+    @apply rounded-[28px] border p-6 shadow-[0_24px_80px_rgba(8,14,28,0.42)] backdrop-blur-xl;
+    border-color: rgba(143, 179, 226, 0.16);
+    background-color: rgba(30, 47, 79, 0.58);
+    transition:
+      transform 220ms ease,
+      border-color 220ms ease,
+      background-color 220ms ease,
+      box-shadow 220ms ease;
+  }
+
+  .panel-muted {
+    @apply rounded-2xl border p-4 backdrop-blur-md;
+    border-color: rgba(143, 179, 226, 0.14);
+    background-color: rgba(49, 72, 122, 0.28);
+    transition:
+      transform 220ms ease,
+      border-color 220ms ease,
+      background-color 220ms ease;
+  }
+
+  .nav-surface {
+    @apply sticky top-0 z-10 border-b backdrop-blur-xl;
+    border-color: rgba(143, 179, 226, 0.14);
+    background-color: rgba(25, 35, 56, 0.78);
+    animation: navDrop 480ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .nav-link {
+    @apply inline-flex items-center rounded-full border px-4 py-2 text-sm font-medium text-white transition;
+    border-color: rgba(143, 179, 226, 0.14);
+    background-color: rgba(49, 72, 122, 0.2);
+  }
+
+  .nav-link-accent {
+    @apply inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold text-white transition;
+    border-color: rgba(143, 179, 226, 0.32);
+    background-color: #31487A;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-2xl border bg-gradient-to-r from-[#31487A] via-[#3c578f] to-[#8FB3E2] px-5 py-3 font-semibold text-white shadow-[0_18px_48px_rgba(49,72,122,0.34)] transition hover:brightness-110 disabled:opacity-50;
+    border-color: rgba(143, 179, 226, 0.35);
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-2xl border px-5 py-3 font-semibold text-white transition disabled:opacity-50;
+    border-color: rgba(143, 179, 226, 0.14);
+    background-color: rgba(49, 72, 122, 0.24);
+  }
+
+  .btn-success {
+    @apply inline-flex items-center justify-center rounded-2xl border px-5 py-3 font-semibold text-white transition;
+    border-color: rgba(143, 179, 226, 0.28);
+    background-color: rgba(143, 179, 226, 0.14);
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center rounded-2xl border px-5 py-3 font-semibold text-white transition;
+    border-color: rgba(217, 225, 241, 0.24);
+    background-color: rgba(217, 225, 241, 0.1);
+  }
+
+  .field-label {
+    @apply mb-2 block text-sm font-semibold tracking-wide text-[#D9E1F1];
+  }
+
+  .field-input {
+    @apply w-full rounded-2xl border px-4 py-3 text-white outline-none transition focus:ring-2;
+    border-color: rgba(143, 179, 226, 0.14);
+    background-color: rgba(25, 35, 56, 0.48);
+  }
+
+  .stat-card {
+    @apply panel relative overflow-hidden;
+  }
+
+  .route-shell {
+    animation: pageEnter 460ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .page-stage {
+    animation: pageStage 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .page-stage > * {
+    animation: riseIn 560ms cubic-bezier(0.16, 1, 0.3, 1);
+    animation-fill-mode: both;
+  }
+
+  .page-stage > *:nth-child(1) { animation-delay: 40ms; }
+  .page-stage > *:nth-child(2) { animation-delay: 90ms; }
+  .page-stage > *:nth-child(3) { animation-delay: 140ms; }
+  .page-stage > *:nth-child(4) { animation-delay: 190ms; }
+  .page-stage > *:nth-child(5) { animation-delay: 240ms; }
+  .page-stage > *:nth-child(6) { animation-delay: 290ms; }
+
+  .loading-orb {
+    animation: pulseOrb 1.8s ease-in-out infinite;
+  }
+
+  .stat-label {
+    @apply text-sm font-medium uppercase tracking-[0.18em];
+    color: rgba(217, 225, 241, 0.72);
+  }
+
+  .stat-value {
+    @apply mt-3 text-4xl font-bold text-white;
+  }
+
+  .table-shell {
+    @apply overflow-hidden rounded-[24px] border;
+    border-color: rgba(143, 179, 226, 0.14);
+    background-color: rgba(30, 47, 79, 0.58);
+  }
+
+  .table-header {
+    @apply border-b text-left text-xs font-semibold uppercase tracking-[0.18em];
+    border-color: rgba(143, 179, 226, 0.14);
+    background-color: rgba(49, 72, 122, 0.28);
+    color: rgba(217, 225, 241, 0.78);
+  }
+
+  .table-row {
+    @apply border-b transition;
+    border-color: rgba(143, 179, 226, 0.12);
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white;
+  }
+
+  .nav-link:hover {
+    border-color: rgba(143, 179, 226, 0.28);
+    background-color: rgba(49, 72, 122, 0.38);
+    transform: translateY(-1px);
+  }
+
+  .nav-link-accent:hover {
+    background-color: #3b568f;
+    transform: translateY(-1px);
+  }
+
+  .btn-secondary:hover {
+    background-color: rgba(49, 72, 122, 0.4);
+    transform: translateY(-1px);
+  }
+
+  .btn-success:hover {
+    background-color: rgba(143, 179, 226, 0.22);
+    transform: translateY(-1px);
+  }
+
+  .btn-danger:hover {
+    background-color: rgba(217, 225, 241, 0.16);
+    transform: translateY(-1px);
+  }
+
+  .field-input:focus {
+    border-color: rgba(143, 179, 226, 0.5);
+    --tw-ring-color: rgba(143, 179, 226, 0.2);
+  }
+
+  .table-row:hover {
+    background-color: rgba(49, 72, 122, 0.18);
+  }
+
+  .panel:hover,
+  .panel-muted:hover,
+  .stat-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(143, 179, 226, 0.22);
+  }
+}
+
+@keyframes navDrop {
+  from {
+    opacity: 0;
+    transform: translateY(-16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pageStage {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(22px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes pulseOrb {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.92);
+    box-shadow: 0 0 0 0 rgba(143, 179, 226, 0.08);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 0 16px rgba(143, 179, 226, 0);
+  }
+}
+
+@keyframes appAmbient {
+  from {
+    background-position: 0% 0%, 100% 100%, 50% 50%;
+  }
+
+  to {
+    background-position: 4% 0%, 96% 100%, 50% 52%;
+  }
+}
