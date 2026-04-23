@@ -199,6 +199,7 @@ const Reports = () => {
             <option value="rejected">Rejected</option>
             <option value="pending_supervisor">Pending Supervisor</option>
             <option value="pending_accounting">Pending Accounting</option>
+            <option value="returned_for_revision">Returned for Revision</option>
             <option value="released">Released</option>
           </select>
           <select className="field-input" value={filters.category} onChange={e => setFilters({ ...filters, category: e.target.value })}>
