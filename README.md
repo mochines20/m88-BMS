@@ -70,6 +70,10 @@ If your database is already running and only needs forgot-password support, exec
 
 If your hosted Supabase database is already running and you want the accounting-ready workflow additions, execute `docs/add-accounting-workflow.sql`.
 
+If your hosted Supabase database is already running and you want year-aware ticket routing plus fiscal-year request storage, execute `docs/add-request-fiscal-year.sql`.
+
+If you want to fully retire older department fiscal years and move related users/tickets into the latest configured fiscal year, execute `docs/retire-old-fiscal-years.sql`.
+
 Production note: this project is designed to connect to a hosted Supabase database through `SUPABASE_URL`. In production, the backend and Netlify functions now reject `localhost` or `127.0.0.1` database URLs.
 
 ### 4.5 **Local seed helper**

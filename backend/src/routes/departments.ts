@@ -2,6 +2,7 @@ import express from 'express';
 import { authenticate, authorize } from '../middleware/auth';
 import { supabase } from '../utils/supabase';
 import { buildDepartmentBudgetSummaryMap, fetchRequestAllocationsByRequestId, isBudgetCommittedStatus, normalizeAllocations } from '../utils/budget';
+import { ensureDepartmentsForFiscalYear, toCanonicalDepartmentName } from '../utils/fiscal';
 
 const router = express.Router();
 
@@ -43,11 +44,16 @@ router.post('/', authenticate, authorize('admin', 'accounting'), async (req, res
 
   const normalizedName = String(name).trim();
   const normalizedFiscalYear = Number.parseInt(fiscal_year, 10);
+  const canonicalDepartmentName = toCanonicalDepartmentName(normalizedName);
+
+  if (!canonicalDepartmentName) {
+    return res.status(400).json({ error: 'Department name is required' });
+  }
 
   const { data: existingDepartment, error: existingDepartmentError } = await supabase
     .from('departments')
     .select('id, name, fiscal_year')
-    .ilike('name', normalizedName)
+    .ilike('name', canonicalDepartmentName)
     .eq('fiscal_year', normalizedFiscalYear)
     .maybeSingle();
 
@@ -56,21 +62,20 @@ router.post('/', authenticate, authorize('admin', 'accounting'), async (req, res
     return res.status(409).json({ error: 'A department with this name and fiscal year already exists.' });
   }
 
-  const payload = {
-    name: normalizedName,
-    annual_budget: toNumber(annual_budget),
-    fiscal_year: normalizedFiscalYear,
-    updated_at: new Date()
-  };
+  const yearDepartments = await ensureDepartmentsForFiscalYear(supabase, normalizedFiscalYear, {
+    seedName: canonicalDepartmentName,
+    seedAnnualBudget: toNumber(annual_budget)
+  });
+  const createdDepartment = yearDepartments.find((department: any) => String(department.name).trim().toLowerCase() === canonicalDepartmentName.toLowerCase());
 
-  const { data, error } = await supabase
-    .from('departments')
-    .insert(payload)
-    .select()
-    .single();
+  if (!createdDepartment) {
+    return res.status(400).json({ error: 'Unable to provision the fiscal year departments.' });
+  }
 
-  if (error) return res.status(400).json({ error });
-  res.status(201).json(data);
+  res.status(201).json({
+    ...createdDepartment,
+    generated_departments: yearDepartments
+  });
 });
 
 router.get('/:id/budget-breakdown', authenticate, async (req: any, res) => {

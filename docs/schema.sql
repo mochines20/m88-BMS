@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS expense_requests (
   request_code TEXT UNIQUE NOT NULL,
   employee_id UUID,
   department_id UUID,
+  fiscal_year INT,
   item_name TEXT NOT NULL,
   category TEXT NOT NULL,
   amount DECIMAL(15,2) NOT NULL,
@@ -388,6 +389,7 @@ END $$;
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_expense_requests_status ON expense_requests(status);
 CREATE INDEX IF NOT EXISTS idx_expense_requests_department_id ON expense_requests(department_id);
+CREATE INDEX IF NOT EXISTS idx_expense_requests_fiscal_year ON expense_requests(fiscal_year);
 CREATE INDEX IF NOT EXISTS idx_expense_requests_submitted_at ON expense_requests(submitted_at);
 CREATE INDEX IF NOT EXISTS idx_expense_requests_disbursement_status ON expense_requests(disbursement_status);
 CREATE INDEX IF NOT EXISTS idx_expense_requests_released_at ON expense_requests(released_at);

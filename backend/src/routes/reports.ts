@@ -1,12 +1,15 @@
 import express from 'express';
-import { authenticate, authorize } from '../middleware/auth';
+import { authenticate } from '../middleware/auth';
 import { supabase } from '../utils/supabase';
 import PDFDocument from 'pdfkit';
 import ExcelJS from 'exceljs';
+import { getAccessibleDepartmentIdsForUser, getLatestConfiguredFiscalYear } from '../utils/fiscal';
 
 const router = express.Router();
 const normalizeDepartmentName = (value: string) => String(value || '').trim();
 const normalizeDepartmentKey = (value: string) => normalizeDepartmentName(value).toLowerCase();
+const getDepartmentFilterKey = (department: { name?: string; fiscal_year?: number }) =>
+  `${normalizeDepartmentKey(String(department?.name || ''))}::${department?.fiscal_year ?? ''}`;
 const LEGACY_TO_CANONICAL_DEPARTMENT: Record<string, string> = {
   m88it: 'IT Department',
   m88purchasing: 'Purchasing Department',
@@ -19,12 +22,12 @@ const LEGACY_TO_CANONICAL_DEPARTMENT: Record<string, string> = {
 };
 const REQUESTS_DEPARTMENT_SELECT = `
   *,
-  departments:departments!fk_expense_requests_department_id(name)
+  departments:departments!fk_expense_requests_department_id(name, fiscal_year)
 `;
 const REQUESTS_REPORT_SELECT = `
   *,
   users:users!fk_expense_requests_employee_id(name),
-  departments:departments!fk_expense_requests_department_id(name)
+  departments:departments!fk_expense_requests_department_id(name, fiscal_year)
 `;
 const toCanonicalDepartmentName = (value: string) => {
   const normalizedValue = normalizeDepartmentName(value);
@@ -34,19 +37,31 @@ const toCanonicalDepartmentName = (value: string) => {
 
 // GET /api/reports/filter-options
 router.get('/filter-options', authenticate, async (req: any, res) => {
+  const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
   let requestQuery = supabase
     .from('expense_requests')
-    .select('category, department_id')
+    .select('category, department_id, fiscal_year')
     .order('category', { ascending: true });
 
   let departmentQuery = supabase
     .from('departments')
-    .select('id, name')
+    .select('id, name, fiscal_year')
     .order('name', { ascending: true });
 
   if (req.user.role === 'employee' || req.user.role === 'supervisor') {
-    requestQuery = requestQuery.eq('department_id', req.user.department_id);
-    departmentQuery = departmentQuery.eq('id', req.user.department_id);
+    const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
+    if (req.user.role === 'employee') {
+      const activeDepartmentId = accessibleDepartmentIds[0] || req.user.department_id;
+      requestQuery = requestQuery.eq('department_id', activeDepartmentId);
+      departmentQuery = departmentQuery.eq('id', activeDepartmentId);
+    } else {
+      requestQuery = accessibleDepartmentIds.length
+        ? requestQuery.in('department_id', accessibleDepartmentIds)
+        : requestQuery.eq('department_id', req.user.department_id);
+      departmentQuery = accessibleDepartmentIds.length
+        ? departmentQuery.in('id', accessibleDepartmentIds)
+        : departmentQuery.eq('id', req.user.department_id);
+    }
   }
 
   const [{ data: requestRows, error: requestError }, { data: departments, error: departmentError }] = await Promise.all([
@@ -60,7 +75,7 @@ router.get('/filter-options', authenticate, async (req: any, res) => {
   const uniqueDepartments = new Map<string, any>();
   (departments || []).forEach((department: any) => {
     const canonicalName = toCanonicalDepartmentName(department.name);
-    const key = normalizeDepartmentKey(canonicalName);
+    const key = getDepartmentFilterKey({ name: canonicalName, fiscal_year: department.fiscal_year });
     const current = uniqueDepartments.get(key);
 
     if (!current || String(department.id) < String(current.id)) {
@@ -81,17 +96,32 @@ router.get('/filter-options', authenticate, async (req: any, res) => {
 
   res.json({
     departments: Array.from(uniqueDepartments.values()).sort((left: any, right: any) => left.name.localeCompare(right.name)),
-    categories
+    categories,
+    fiscal_years: Array.from(
+      new Set(
+        [
+          ...(requestRows || []).map((row: any) => Number(row.fiscal_year || 0)),
+          ...(departments || []).map((department: any) => Number(department.fiscal_year || 0))
+        ].filter((year) => Number.isInteger(year) && year > 0)
+      )
+    ).sort((left, right) => right - left)
   });
 });
 
 // GET /api/reports/summary?dept=&from=&to=&format=json|pdf|excel
 router.get('/summary', authenticate, async (req: any, res) => {
-  const { dept, from, to, status, category, format } = req.query;
+  const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
+  const { dept, from, to, status, category, fiscal_year, format } = req.query;
   let query = supabase.from('expense_requests').select(REQUESTS_DEPARTMENT_SELECT);
   if (req.user.role === 'employee') query = query.eq('employee_id', req.user.id);
-  else if (req.user.role === 'supervisor') query = query.eq('department_id', req.user.department_id);
+  else if (req.user.role === 'supervisor') {
+    const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
+    query = accessibleDepartmentIds.length
+      ? query.in('department_id', accessibleDepartmentIds)
+      : query.eq('department_id', req.user.department_id);
+  }
   if (dept) query = query.eq('department_id', dept);
+  if (fiscal_year) query = query.eq('fiscal_year', Number(fiscal_year));
   if (from) query = query.gte('submitted_at', from);
   if (to) query = query.lte('submitted_at', to);
   if (status) query = query.eq('status', status);
@@ -147,11 +177,18 @@ router.get('/summary', authenticate, async (req: any, res) => {
 
 // GET /api/reports/requests?dept=&from=&to=&status=&category=&format=json|pdf|excel
 router.get('/requests', authenticate, async (req: any, res) => {
-  const { dept, from, to, status, category, format } = req.query;
+  const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
+  const { dept, from, to, status, category, fiscal_year, format } = req.query;
   let query = supabase.from('expense_requests').select(REQUESTS_REPORT_SELECT);
   if (req.user.role === 'employee') query = query.eq('employee_id', req.user.id);
-  else if (req.user.role === 'supervisor') query = query.eq('department_id', req.user.department_id);
+  else if (req.user.role === 'supervisor') {
+    const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
+    query = accessibleDepartmentIds.length
+      ? query.in('department_id', accessibleDepartmentIds)
+      : query.eq('department_id', req.user.department_id);
+  }
   if (dept) query = query.eq('department_id', dept);
+  if (fiscal_year) query = query.eq('fiscal_year', Number(fiscal_year));
   if (from) query = query.gte('submitted_at', from);
   if (to) query = query.lte('submitted_at', to);
   if (status) query = query.eq('status', status);

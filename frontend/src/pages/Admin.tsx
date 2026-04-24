@@ -27,6 +27,19 @@ const toNumber = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const getBudgetHealth = (department: any) => {
+  const annualBudget = toNumber(department?.annual_budget);
+  const usedBudget = toNumber(department?.used_budget);
+  const projectedRemaining = toNumber(
+    department?.projected_remaining_budget ?? department?.remaining_budget ?? annualBudget - usedBudget
+  );
+  const utilization = annualBudget > 0 ? (usedBudget / annualBudget) * 100 : 0;
+
+  if (projectedRemaining < 0 || utilization >= 90) return 'critical';
+  if (utilization >= 70) return 'high';
+  return 'low';
+};
+
 const getDepartmentIdentityKey = (department: any) =>
   `${String(department?.name || '').trim().toLowerCase()}::${department?.fiscal_year ?? ''}`;
 
@@ -113,6 +126,9 @@ const Admin = () => {
   const [fxRateUpdatedAt, setFxRateUpdatedAt] = useState('');
   const [fxStatus, setFxStatus] = useState<'live' | 'fallback'>('fallback');
   const [displayCurrency, setDisplayCurrency] = useState<'PHP' | 'USD'>('PHP');
+  const [selectedFiscalYear, setSelectedFiscalYear] = useState<number>(new Date().getFullYear());
+  const [departmentSearch, setDepartmentSearch] = useState('');
+  const [budgetHealthFilter, setBudgetHealthFilter] = useState<'all' | 'low' | 'high' | 'critical'>('all');
   const [newDept, setNewDept] = useState({
     name: '',
     annual_budget: '',
@@ -155,6 +171,53 @@ const Admin = () => {
       return String(left?.name || '').localeCompare(String(right?.name || ''));
     });
   }, [departments]);
+
+  const availableFiscalYears = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          visibleDepartments
+            .map((department) => Number(department?.fiscal_year || 0))
+            .filter((year) => Number.isInteger(year) && year > 0)
+        )
+      ).sort((left, right) => right - left),
+    [visibleDepartments]
+  );
+
+  const filteredVisibleDepartments = useMemo(() => {
+    const searchTerm = departmentSearch.trim().toLowerCase();
+
+    return visibleDepartments.filter((department) => {
+      const matchesYear = !selectedFiscalYear || Number(department.fiscal_year) === Number(selectedFiscalYear);
+      const matchesName =
+        !searchTerm ||
+        String(department?.name || '').toLowerCase().includes(searchTerm) ||
+        String(getDepartmentCode(department?.name || '')).toLowerCase().includes(searchTerm);
+      const matchesHealth = budgetHealthFilter === 'all' || getBudgetHealth(department) === budgetHealthFilter;
+
+      return matchesYear && matchesName && matchesHealth;
+    });
+  }, [visibleDepartments, selectedFiscalYear, departmentSearch, budgetHealthFilter]);
+
+  useEffect(() => {
+    if (!availableFiscalYears.length) return;
+    if (!availableFiscalYears.includes(selectedFiscalYear)) {
+      setSelectedFiscalYear(availableFiscalYears[0]);
+      setNewDept((current) => ({ ...current, fiscal_year: availableFiscalYears[0] }));
+    }
+  }, [availableFiscalYears, selectedFiscalYear]);
+
+  useEffect(() => {
+    if (!filteredVisibleDepartments.length) {
+      setSelectedDepartmentId('');
+      return;
+    }
+
+    const selectedStillVisible = filteredVisibleDepartments.some((department) => department.id === selectedDepartmentId);
+    if (!selectedStillVisible) {
+      setSelectedDepartmentId(filteredVisibleDepartments[0].id);
+    }
+  }, [filteredVisibleDepartments, selectedDepartmentId]);
 
   useEffect(() => {
     fetchUser();
@@ -237,10 +300,13 @@ const Admin = () => {
           .values()
       );
       const firstVisibleDepartment = nextVisibleDepartments[0];
-      const selectedStillVisible = nextVisibleDepartments.some((dept: any) => dept.id === selectedDepartmentId);
-
-      if ((!selectedDepartmentId || !selectedStillVisible) && firstVisibleDepartment) {
-        setSelectedDepartmentId(firstVisibleDepartment.id);
+      if (firstVisibleDepartment) {
+        const latestFiscalYear = Math.max(
+          ...nextVisibleDepartments.map((department: any) => Number(department?.fiscal_year || 0)),
+          new Date().getFullYear()
+        );
+        setSelectedFiscalYear((current) => current || latestFiscalYear);
+        setNewDept((current) => ({ ...current, fiscal_year: current.fiscal_year || latestFiscalYear }));
       }
     } catch (err) {
       if (showError) toast.error('Failed to fetch departments');
@@ -297,15 +363,50 @@ const Admin = () => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      toast.success('Department created!');
+      toast.success(
+        newDept.fiscal_year >= activeFiscalYear
+          ? `FY ${newDept.fiscal_year} is now available for departments, new signups, and new tickets.`
+          : 'Department created!'
+      );
       setNewDept({
         name: '',
         annual_budget: '',
-        fiscal_year: new Date().getFullYear()
+        fiscal_year: selectedFiscalYear || availableFiscalYears[0] || new Date().getFullYear()
       });
+      setSelectedFiscalYear(newDept.fiscal_year);
       await fetchDepartments(false);
     } catch (err: any) {
       toast.error(getErrorMessage(err, 'Failed to create department'));
+    }
+  };
+
+  const createNextFiscalYearDepartments = async () => {
+    const token = localStorage.getItem('token');
+    const baseDepartment = filteredVisibleDepartments[0] || visibleDepartments[0];
+    const nextFiscalYear = (availableFiscalYears[0] || new Date().getFullYear()) + 1;
+
+    try {
+      await api.post(
+        '/api/departments',
+        {
+          name: baseDepartment?.name || 'Finance Department',
+          annual_budget: toNumber(baseDepartment?.annual_budget),
+          fiscal_year: nextFiscalYear
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      toast.success(`FY ${nextFiscalYear} is now active for all departments, new signups, and new tickets.`);
+      setSelectedFiscalYear(nextFiscalYear);
+      setSelectedDepartmentId('');
+      setNewDept({
+        name: '',
+        annual_budget: '',
+        fiscal_year: nextFiscalYear
+      });
+      await fetchDepartments(false);
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Failed to create the next fiscal year departments'));
     }
   };
 
@@ -354,26 +455,27 @@ const Admin = () => {
     }
   };
 
-  const selectedDepartment = visibleDepartments.find(dept => dept.id === selectedDepartmentId);
+  const selectedDepartment = filteredVisibleDepartments.find(dept => dept.id === selectedDepartmentId);
   const breakdownDepartment = selectedBreakdown?.department;
   const breakdownTotals = selectedBreakdown?.totals;
   const breakdownCounts = selectedBreakdown?.counts;
   const editableBudgetValue = breakdownTotals?.annual_budget ?? toNumber(selectedDepartment?.annual_budget);
   const editableBudgetDepartmentId = selectedDepartment?.id || selectedDepartmentId;
+  const activeFiscalYear = availableFiscalYears[0] || selectedFiscalYear || new Date().getFullYear();
 
   const overview = useMemo(() => {
-    const totalBudget = visibleDepartments.reduce((sum, dept) => sum + toNumber(dept.annual_budget), 0);
-    const usedBudget = visibleDepartments.reduce((sum, dept) => sum + toNumber(dept.used_budget), 0);
+    const totalBudget = filteredVisibleDepartments.reduce((sum, dept) => sum + toNumber(dept.annual_budget), 0);
+    const usedBudget = filteredVisibleDepartments.reduce((sum, dept) => sum + toNumber(dept.used_budget), 0);
     const remainingBudget = totalBudget - usedBudget;
 
     return {
-      totalDepartments: visibleDepartments.length,
+      totalDepartments: filteredVisibleDepartments.length,
       totalBudget,
       usedBudget,
       remainingBudget,
       utilization: totalBudget > 0 ? (usedBudget / totalBudget) * 100 : 0
     };
-  }, [visibleDepartments]);
+  }, [filteredVisibleDepartments]);
 
   const displayAmount = (value: number) =>
     displayCurrency === 'USD'
@@ -425,6 +527,9 @@ const Admin = () => {
             <h1 className="page-title">{user?.role === 'accounting' ? 'Accounting Panel' : 'Admin Panel'}</h1>
             <p className="page-subtitle">
               Automatic FX conversion, cleaner department list, and tighter budget cards for a more modern workspace.
+            </p>
+            <p className="mt-3 text-sm text-[#D9E1F1]/72">
+              Active fiscal year for new signups and new tickets: <span className="font-semibold text-white">FY {activeFiscalYear}</span>
             </p>
           </div>
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_360px]">
@@ -522,16 +627,55 @@ const Admin = () => {
             <div className="mb-5">
               <h2 className="text-xl font-bold text-white">Departments</h2>
               <p className="mt-1 text-sm text-[#D9E1F1]/72">Legacy `m88...` entries are now hidden from this view.</p>
+              <p className="mt-2 text-xs text-[#D9E1F1]/58">
+                Each fiscal year stays separate, so FY 2024, FY 2025, FY 2026, and FY 2027 are filtered independently.
+              </p>
             </div>
 
             <div className="space-y-4">
-              {visibleDepartments.map((dept) => {
+              <div className="space-y-3 rounded-[24px] border border-[#8FB3E2]/10 bg-black/10 p-4">
+                <div className="flex flex-wrap gap-2">
+                  {availableFiscalYears.map((year) => (
+                    <button
+                      key={year}
+                      type="button"
+                      onClick={() => setSelectedFiscalYear(year)}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] transition ${
+                        selectedFiscalYear === year
+                          ? 'border-[#8FB3E2]/30 bg-[#31487A]/70 text-white'
+                          : 'border-white/10 bg-white/5 text-[#D9E1F1]/72 hover:border-[#8FB3E2]/20 hover:text-white'
+                      }`}
+                    >
+                      FY {year}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  className="field-input"
+                  placeholder="Filter by department name"
+                  value={departmentSearch}
+                  onChange={(event) => setDepartmentSearch(event.target.value)}
+                />
+                <select
+                  className="field-input"
+                  value={budgetHealthFilter}
+                  onChange={(event) => setBudgetHealthFilter(event.target.value as 'all' | 'low' | 'high' | 'critical')}
+                >
+                  <option value="all">All Budget Health</option>
+                  <option value="low">Low Utilization</option>
+                  <option value="high">High Utilization</option>
+                  <option value="critical">Critical Budget</option>
+                </select>
+              </div>
+
+              {filteredVisibleDepartments.map((dept) => {
                 const isSelected = dept.id === selectedDepartmentId;
                 const annualBudget = toNumber(dept.annual_budget);
                 const usedBudget = toNumber(dept.used_budget);
                 const remaining = toNumber(dept.remaining_budget || (annualBudget - usedBudget));
                 const projectedRemaining = toNumber(dept.projected_remaining_budget || remaining);
                 const utilization = annualBudget > 0 ? (usedBudget / annualBudget) * 100 : 0;
+                const budgetHealth = getBudgetHealth(dept);
 
                 return (
                   <button
@@ -554,6 +698,18 @@ const Admin = () => {
                         </div>
                         <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-[#D9E1F1]/78">
                           {formatPercent(utilization)}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex items-center justify-between gap-3">
+                        <span className="text-[11px] uppercase tracking-[0.14em] text-[#D9E1F1]/58">Budget Health</span>
+                        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${
+                          budgetHealth === 'critical'
+                            ? 'border-[#ffb2b2]/18 bg-[#ffb2b2]/10 text-white'
+                            : budgetHealth === 'high'
+                              ? 'border-[#8FB3E2]/18 bg-[#8FB3E2]/12 text-white'
+                              : 'border-white/10 bg-white/5 text-[#D9E1F1]/78'
+                        }`}>
+                          {budgetHealth}
                         </span>
                       </div>
 
@@ -579,6 +735,11 @@ const Admin = () => {
                   </button>
                 );
               })}
+              {filteredVisibleDepartments.length === 0 && (
+                <div className="rounded-[24px] border border-white/8 bg-black/10 p-4 text-sm text-[#D9E1F1]/72">
+                  No departments matched the current year or filter.
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1016,8 +1177,14 @@ const Admin = () => {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <h2 className="text-2xl font-bold text-white">Add New Department</h2>
-              <p className="mt-2 text-[#D9E1F1]/72">Accounting and admin can add departments directly from this panel.</p>
+              <p className="mt-2 text-[#D9E1F1]/72">Accounting and admin can add one department or generate the whole next fiscal year from this panel.</p>
             </div>
+            <button
+              className="btn-secondary w-full lg:w-auto"
+              onClick={createNextFiscalYearDepartments}
+            >
+              Add All Departments For FY {activeFiscalYear + 1}
+            </button>
           </div>
           <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
             <input className="field-input" placeholder="Department Name" value={newDept.name} onChange={e => setNewDept({...newDept, name: e.target.value})} />

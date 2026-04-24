@@ -5,35 +5,18 @@ import jwt from 'jsonwebtoken';
 import { supabase } from '../utils/supabase';
 import { authenticate } from '../middleware/auth';
 import { sendEmail } from '../utils/email';
+import {
+  CANONICAL_DEPARTMENTS,
+  COMPANY_EMAIL_DOMAIN,
+  getLatestConfiguredFiscalYear,
+  normalizeDepartmentKey,
+  normalizeDepartmentName,
+  pickMostRelevantDepartment,
+  syncUserDepartmentToActiveYear,
+  toCanonicalDepartmentName
+} from '../utils/fiscal';
 
 const router = express.Router();
-const COMPANY_EMAIL_DOMAIN = 'madison88.com';
-const normalizeDepartmentName = (value: string) => String(value || '').trim();
-const normalizeDepartmentKey = (value: string) => normalizeDepartmentName(value).toLowerCase();
-const LEGACY_TO_CANONICAL_DEPARTMENT: Record<string, string> = {
-  m88it: 'IT Department',
-  m88purchasing: 'Purchasing Department',
-  m88planning: 'Planning Department',
-  m88logistics: 'Logistics Department',
-  m88hr: 'HR Department',
-  m88accounting: 'Finance Department',
-  m88admin: 'Admin Department',
-  'accounting department': 'Finance Department'
-};
-const CANONICAL_DEPARTMENTS = [
-  'Admin Department',
-  'Finance Department',
-  'HR Department',
-  'IT Department',
-  'Logistics Department',
-  'Planning Department',
-  'Purchasing Department'
-];
-const toCanonicalDepartmentName = (value: string) => {
-  const normalizedValue = normalizeDepartmentName(value);
-  if (!normalizedValue) return '';
-  return LEGACY_TO_CANONICAL_DEPARTMENT[normalizeDepartmentKey(normalizedValue)] || normalizedValue;
-};
 const PASSWORD_RESET_TOKEN_TTL_MINUTES = Number(process.env.PASSWORD_RESET_TOKEN_TTL_MINUTES || 30);
 const PASSWORD_RESET_RESEND_COOLDOWN_SECONDS = Number(process.env.PASSWORD_RESET_RESEND_COOLDOWN_SECONDS || 60);
 const normalizeEmail = (value?: string) => String(value || '').trim().toLowerCase();
@@ -115,6 +98,7 @@ const wasPasswordResetLinkSentRecently = (lastSentAt?: string | null) => {
 };
 
 const getSignupDepartments = async () => {
+  const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
   const { data, error } = await supabase
     .from('departments')
     .select('id, name, fiscal_year, created_at, updated_at')
@@ -130,7 +114,7 @@ const getSignupDepartments = async () => {
       data: CANONICAL_DEPARTMENTS.map((name) => ({
         id: `canonical:${name}`,
         name,
-        fiscal_year: new Date().getFullYear()
+        fiscal_year: activeFiscalYear
       })),
       error: null
     };
@@ -141,23 +125,15 @@ const getSignupDepartments = async () => {
   (data || []).forEach((department) => {
     const canonicalName = toCanonicalDepartmentName(department.name);
     const key = normalizeDepartmentKey(canonicalName);
-    const current = latestDepartmentsByName.get(key);
     const candidate = {
       ...department,
       name: canonicalName
     };
-
-    if (!current) {
-      latestDepartmentsByName.set(key, candidate);
-      return;
-    }
-
-    const currentUpdatedAt = new Date(current.updated_at || current.created_at || 0).getTime();
-    const candidateUpdatedAt = new Date(candidate.updated_at || candidate.created_at || 0).getTime();
-
-    if (candidateUpdatedAt >= currentUpdatedAt) {
-      latestDepartmentsByName.set(key, candidate);
-    }
+    const current = latestDepartmentsByName.get(key);
+    latestDepartmentsByName.set(
+      key,
+      current ? pickMostRelevantDepartment([current, candidate], activeFiscalYear) : candidate
+    );
   });
 
   return {
@@ -188,6 +164,7 @@ const resolveSignupDepartment = async (departmentIdOrName: string) => {
   const canonicalName = toCanonicalDepartmentName(normalizedValue.startsWith('canonical:')
     ? normalizeDepartmentName(normalizedValue.slice('canonical:'.length))
     : normalizedValue);
+  const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
 
   const { data: matchedDepartments, error: matchedDepartmentsError } = await supabase
     .from('departments')
@@ -213,7 +190,7 @@ const resolveSignupDepartment = async (departmentIdOrName: string) => {
     .insert({
       name: canonicalName,
       annual_budget: 0,
-      fiscal_year: new Date().getFullYear(),
+      fiscal_year: activeFiscalYear,
       updated_at: new Date()
     })
     .select('id, name, fiscal_year')
@@ -481,6 +458,7 @@ router.patch('/profile', authenticate, async (req: any, res) => {
       .from('expense_requests')
       .update({
         department_id: department.id,
+        fiscal_year: department.fiscal_year,
         updated_at: new Date()
       })
       .eq('employee_id', req.user.id),
@@ -591,7 +569,17 @@ router.get('/me', authenticate, async (req: any, res) => {
     .eq('id', req.user.id)
     .single();
   if (error) return res.status(400).json({ error });
-  res.json(user);
+  const activeDepartment = await syncUserDepartmentToActiveYear(
+    supabase,
+    user.id,
+    user.department_id,
+    await getLatestConfiguredFiscalYear(supabase)
+  );
+  res.json({
+    ...user,
+    department_id: activeDepartment?.id || user.department_id,
+    fiscal_year: activeDepartment?.fiscal_year ?? null
+  });
 });
 
 export default router;

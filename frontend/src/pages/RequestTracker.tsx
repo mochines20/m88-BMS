@@ -219,6 +219,10 @@ const RequestTracker = () => {
                 <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/60">Department</p>
                 <p className="mt-2 text-lg font-semibold text-white">{selectedRequest.department_name || 'Unknown department'}</p>
               </div>
+              <div className="panel-muted">
+                <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/60">Fiscal Year</p>
+                <p className="mt-2 text-lg font-semibold text-white">{selectedRequest.fiscal_year || selectedRequest.departments?.fiscal_year || 'N/A'}</p>
+              </div>
               {selectedRequest.budget_summary && (
                 <div className="panel-muted">
                   <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/60">Projected Remaining</p>

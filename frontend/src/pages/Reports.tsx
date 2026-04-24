@@ -5,15 +5,19 @@ import toast from 'react-hot-toast';
 interface DepartmentOption {
   id: string;
   name: string;
+  fiscal_year?: number;
 }
 
 interface ReportFilterOptions {
   departments: DepartmentOption[];
   categories: string[];
+  fiscal_years: number[];
 }
 
 const normalizeDepartmentName = (value: string) => String(value || '').trim();
 const normalizeDepartmentKey = (value: string) => normalizeDepartmentName(value).toLowerCase();
+const getDepartmentFilterKey = (department: { name?: string; fiscal_year?: number }) =>
+  `${normalizeDepartmentKey(String(department?.name || ''))}::${department?.fiscal_year ?? ''}`;
 const LEGACY_TO_CANONICAL_DEPARTMENT: Record<string, string> = {
   m88it: 'IT Department',
   m88purchasing: 'Purchasing Department',
@@ -36,13 +40,14 @@ const normalizeFilterOptions = (raw: Partial<ReportFilterOptions> | null | undef
 
   (raw?.departments || []).forEach((department) => {
     const canonicalName = toCanonicalDepartmentName(department.name);
-    const key = normalizeDepartmentKey(canonicalName);
+    const key = getDepartmentFilterKey({ name: canonicalName, fiscal_year: department.fiscal_year });
     const current = uniqueDepartments.get(key);
 
     if (!current || String(department.id) < String(current.id)) {
       uniqueDepartments.set(key, {
         id: department.id,
-        name: canonicalName
+        name: canonicalName,
+        fiscal_year: department.fiscal_year
       });
     }
   });
@@ -53,13 +58,15 @@ const normalizeFilterOptions = (raw: Partial<ReportFilterOptions> | null | undef
 
   return {
     departments: Array.from(uniqueDepartments.values()).sort((left, right) => left.name.localeCompare(right.name)),
-    categories
+    categories,
+    fiscal_years: Array.from(new Set((raw as any)?.fiscal_years || [])).map(Number).filter(Boolean).sort((left, right) => right - left)
   };
 };
 
 const Reports = () => {
   const [filters, setFilters] = useState({
     dept: '',
+    fiscal_year: String(new Date().getFullYear()),
     from: '',
     to: '',
     status: '',
@@ -71,7 +78,8 @@ const Reports = () => {
   const [requestsLoaded, setRequestsLoaded] = useState(false);
   const [filterOptions, setFilterOptions] = useState<ReportFilterOptions>({
     departments: [],
-    categories: []
+    categories: [],
+    fiscal_years: []
   });
 
   const getAuthHeaders = () => {
@@ -87,7 +95,8 @@ const Reports = () => {
 
     const departments = (departmentsRes.data || []).map((department: any) => ({
       id: String(department.id),
-      name: toCanonicalDepartmentName(String(department.name || ''))
+      name: toCanonicalDepartmentName(String(department.name || '')),
+      fiscal_year: Number(department.fiscal_year || 0) || undefined
     }));
 
     const categories = Array.from(
@@ -100,7 +109,16 @@ const Reports = () => {
 
     categories.sort((left, right) => left.localeCompare(right));
 
-    return normalizeFilterOptions({ departments, categories });
+    const fiscal_years = Array.from(
+      new Set(
+        [
+          ...(departmentsRes.data || []).map((department: any) => Number(department.fiscal_year || 0)),
+          ...(requestsRes.data || []).map((request: any) => Number(request.fiscal_year || request.departments?.fiscal_year || 0))
+        ].filter((year) => Number.isInteger(year) && year > 0)
+      )
+    ).sort((left, right) => right - left);
+
+    return normalizeFilterOptions({ departments, categories, fiscal_years } as any);
   };
 
   const fetchFilterOptions = async () => {
@@ -187,7 +205,15 @@ const Reports = () => {
             <option value="">All Departments</option>
             {filterOptions.departments.map((department) => (
               <option key={department.id} value={department.id}>
-                {department.name}
+                {department.name} - FY {department.fiscal_year || 'N/A'}
+              </option>
+            ))}
+          </select>
+          <select className="field-input" value={filters.fiscal_year} onChange={e => setFilters({ ...filters, fiscal_year: e.target.value })}>
+            <option value="">All Fiscal Years</option>
+            {filterOptions.fiscal_years.map((year) => (
+              <option key={year} value={year}>
+                Fiscal Year {year}
               </option>
             ))}
           </select>
@@ -259,6 +285,7 @@ const Reports = () => {
                   <th className="p-4">Request Code</th>
                   <th className="p-4">Sender</th>
                   <th className="p-4">Department</th>
+                  <th className="p-4">Fiscal Year</th>
                   <th className="p-4">Category</th>
                   <th className="p-4">Item</th>
                   <th className="p-4">Amount</th>
@@ -272,6 +299,7 @@ const Reports = () => {
                     <td className="p-4">{req.request_code}</td>
                     <td className="p-4">{req.users?.name || 'Unknown sender'}</td>
                     <td className="p-4">{req.departments?.name || '-'}</td>
+                    <td className="p-4">{req.fiscal_year || req.departments?.fiscal_year || '-'}</td>
                     <td className="p-4">{req.category || '-'}</td>
                     <td className="p-4">{req.item_name}</td>
                     <td className="p-4">PHP {Number(req.amount).toFixed(2)}</td>

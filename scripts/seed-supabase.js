@@ -27,14 +27,16 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) {
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE);
+const fiscalYear = new Date().getFullYear();
 
 const departments = [
-  { name: 'm88IT', annual_budget: 500000.0, fiscal_year: 2024 },
-  { name: 'm88Purchasing', annual_budget: 400000.0, fiscal_year: 2024 },
-  { name: 'm88Planning', annual_budget: 350000.0, fiscal_year: 2024 },
-  { name: 'm88logistics', annual_budget: 450000.0, fiscal_year: 2024 },
-  { name: 'm88HR', annual_budget: 200000.0, fiscal_year: 2024 },
-  { name: 'm88accounting', annual_budget: 300000.0, fiscal_year: 2024 },
+  { name: 'IT Department', annual_budget: 500000.0, fiscal_year: fiscalYear },
+  { name: 'Purchasing Department', annual_budget: 400000.0, fiscal_year: fiscalYear },
+  { name: 'Planning Department', annual_budget: 350000.0, fiscal_year: fiscalYear },
+  { name: 'Logistics Department', annual_budget: 450000.0, fiscal_year: fiscalYear },
+  { name: 'HR Department', annual_budget: 200000.0, fiscal_year: fiscalYear },
+  { name: 'Finance Department', annual_budget: 300000.0, fiscal_year: fiscalYear },
+  { name: 'Admin Department', annual_budget: 250000.0, fiscal_year: fiscalYear },
 ];
 
 const users = [
@@ -43,28 +45,28 @@ const users = [
     email: 'john.employee@madison88.com',
     password_hash: '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu',
     role: 'employee',
-    department_name: 'm88IT',
+    department_name: 'IT Department',
   },
   {
     name: 'Jane Supervisor',
     email: 'jane.supervisor@madison88.com',
     password_hash: '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu',
     role: 'supervisor',
-    department_name: 'm88IT',
+    department_name: 'IT Department',
   },
   {
     name: 'Bob Accounting',
     email: 'bob.accounting@madison88.com',
     password_hash: '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu',
     role: 'accounting',
-    department_name: 'm88accounting',
+    department_name: 'Finance Department',
   },
   {
     name: 'Alice Admin',
     email: 'alice.admin@madison88.com',
     password_hash: '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu',
     role: 'admin',
-    department_name: 'm88accounting',
+    department_name: 'Admin Department',
   },
 ];
 
@@ -73,7 +75,7 @@ async function main() {
 
   const { data: existingDepartments, error: fetchDeptError } = await supabase
     .from('departments')
-    .select('id,name');
+    .select('id,name,fiscal_year');
 
   if (fetchDeptError && fetchDeptError.code !== '42P01') {
     console.error('Failed to read departments:', fetchDeptError);
@@ -86,8 +88,8 @@ async function main() {
     process.exit(1);
   }
 
-  const existingNames = new Set(existingDepartments.map((row) => row.name));
-  const missingDepartments = departments.filter((row) => !existingNames.has(row.name));
+  const existingKeys = new Set(existingDepartments.map((row) => `${row.name}::${row.fiscal_year}`));
+  const missingDepartments = departments.filter((row) => !existingKeys.has(`${row.name}::${row.fiscal_year}`));
 
   if (missingDepartments.length > 0) {
     const { error: insertDeptError } = await supabase.from('departments').insert(missingDepartments);
@@ -100,15 +102,15 @@ async function main() {
     console.log('Departments already exist.');
   }
 
-  const { data: allDepartments } = await supabase.from('departments').select('id,name');
-  const departmentIdByName = Object.fromEntries(allDepartments.map((row) => [row.name, row.id]));
+  const { data: allDepartments } = await supabase.from('departments').select('id,name,fiscal_year');
+  const departmentIdByName = Object.fromEntries(allDepartments.map((row) => [`${row.name}::${row.fiscal_year}`, row.id]));
 
   const usersToInsert = users.map((user) => ({
     name: user.name,
     email: user.email,
     password_hash: user.password_hash,
     role: user.role,
-    department_id: departmentIdByName[user.department_name],
+    department_id: departmentIdByName[`${user.department_name}::${fiscalYear}`],
   }));
 
   const { data: existingUsers, error: fetchUserError } = await supabase

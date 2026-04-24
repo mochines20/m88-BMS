@@ -136,7 +136,7 @@ const REQUEST_RELATIONS_SELECT = `
 const REQUESTS_REPORT_SELECT = `
   *,
   users:users!fk_expense_requests_employee_id(name),
-  departments:departments!fk_expense_requests_department_id(name)
+  departments:departments!fk_expense_requests_department_id(name, fiscal_year)
 `;
 const getActiveResetTokenForUser = async (userId) => {
   const { data, error } = await supabase
@@ -160,6 +160,7 @@ const wasPasswordResetLinkSentRecently = (lastSentAt) => {
 };
 
 const getSignupDepartments = async () => {
+  const activeFiscalYear = await getLatestConfiguredFiscalYear();
   const { data, error } = await supabase
     .from('departments')
     .select('id, name, fiscal_year, created_at, updated_at')
@@ -175,7 +176,7 @@ const getSignupDepartments = async () => {
       data: CANONICAL_DEPARTMENTS.map((name) => ({
         id: `canonical:${name}`,
         name,
-        fiscal_year: new Date().getFullYear()
+        fiscal_year: activeFiscalYear
       })),
       error: null
     };
@@ -185,23 +186,15 @@ const getSignupDepartments = async () => {
   data.forEach((department) => {
     const canonicalName = toCanonicalDepartmentName(department.name);
     const key = normalizeDepartmentKey(canonicalName);
-    const current = latestDepartmentsByName.get(key);
     const candidate = {
       ...department,
       name: canonicalName
     };
-
-    if (!current) {
-      latestDepartmentsByName.set(key, candidate);
-      return;
-    }
-
-    const currentUpdatedAt = new Date(current.updated_at || current.created_at || 0).getTime();
-    const candidateUpdatedAt = new Date(candidate.updated_at || candidate.created_at || 0).getTime();
-
-    if (candidateUpdatedAt >= currentUpdatedAt) {
-      latestDepartmentsByName.set(key, candidate);
-    }
+    const current = latestDepartmentsByName.get(key);
+    latestDepartmentsByName.set(
+      key,
+      current ? pickMostRelevantDepartment([current, candidate], activeFiscalYear) : candidate
+    );
   });
 
   return {
@@ -232,6 +225,7 @@ const resolveSignupDepartment = async (departmentIdOrName) => {
   const canonicalName = toCanonicalDepartmentName(normalizedValue.startsWith('canonical:')
     ? normalizeDepartmentName(normalizedValue.slice('canonical:'.length))
     : normalizedValue);
+  const activeFiscalYear = await getLatestConfiguredFiscalYear();
 
   const { data: matchedDepartments, error: matchedDepartmentsError } = await supabase
     .from('departments')
@@ -257,7 +251,7 @@ const resolveSignupDepartment = async (departmentIdOrName) => {
     .insert({
       name: canonicalName,
       annual_budget: 0,
-      fiscal_year: new Date().getFullYear(),
+      fiscal_year: activeFiscalYear,
       updated_at: new Date()
     })
     .select('id, name, fiscal_year')
@@ -268,6 +262,167 @@ const resolveSignupDepartment = async (departmentIdOrName) => {
   }
 
   return { data: createdDepartment, error: null };
+};
+
+const getCurrentFiscalYear = () => new Date().getFullYear();
+const getLatestConfiguredFiscalYear = async (fallback = getCurrentFiscalYear()) => {
+  const { data, error } = await supabase
+    .from('departments')
+    .select('fiscal_year')
+    .order('fiscal_year', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) return fallback;
+
+  const year = Number(data?.fiscal_year || 0);
+  return Number.isInteger(year) && year > 0 ? year : fallback;
+};
+const getDepartmentTimestamp = (department) => new Date(department?.updated_at || department?.created_at || 0).getTime();
+const pickMostRelevantDepartment = (departments, preferredFiscalYear = getCurrentFiscalYear()) =>
+  [...departments].sort((left, right) => {
+    const leftPreferred = Number(left?.fiscal_year) === preferredFiscalYear ? 1 : 0;
+    const rightPreferred = Number(right?.fiscal_year) === preferredFiscalYear ? 1 : 0;
+    if (rightPreferred !== leftPreferred) return rightPreferred - leftPreferred;
+
+    const leftYear = Number(left?.fiscal_year || 0);
+    const rightYear = Number(right?.fiscal_year || 0);
+    if (rightYear !== leftYear) return rightYear - leftYear;
+
+    return getDepartmentTimestamp(right) - getDepartmentTimestamp(left);
+  })[0] || null;
+
+const resolveActiveDepartmentForDepartmentId = async (departmentId, preferredFiscalYear) => {
+  const normalizedDepartmentId = String(departmentId || '').trim();
+  if (!normalizedDepartmentId) {
+    return { currentDepartment: null, activeDepartment: null, relatedDepartments: [] };
+  }
+
+  const { data: currentDepartment, error: currentDepartmentError } = await supabase
+    .from('departments')
+    .select('id, name, fiscal_year, annual_budget, used_budget, petty_cash_balance, updated_at, created_at')
+    .eq('id', normalizedDepartmentId)
+    .maybeSingle();
+
+  if (currentDepartmentError || !currentDepartment) {
+    return { currentDepartment: null, activeDepartment: null, relatedDepartments: [] };
+  }
+
+  const canonicalName = toCanonicalDepartmentName(currentDepartment.name);
+  const { data: relatedDepartments, error: relatedDepartmentsError } = await supabase
+    .from('departments')
+    .select('id, name, fiscal_year, annual_budget, used_budget, petty_cash_balance, updated_at, created_at')
+    .ilike('name', canonicalName)
+    .order('fiscal_year', { ascending: false })
+    .order('updated_at', { ascending: false });
+
+  if (relatedDepartmentsError || !relatedDepartments?.length) {
+    return {
+      currentDepartment,
+      activeDepartment: currentDepartment,
+      relatedDepartments: currentDepartment ? [currentDepartment] : []
+    };
+  }
+
+  return {
+    currentDepartment,
+    activeDepartment: pickMostRelevantDepartment(
+      relatedDepartments,
+      preferredFiscalYear ?? (await getLatestConfiguredFiscalYear())
+    ) || currentDepartment,
+    relatedDepartments
+  };
+};
+
+const getAccessibleDepartmentIdsForUser = async (user, preferredFiscalYear) => {
+  if (!user?.department_id) {
+    return [];
+  }
+
+  if (user.role !== 'supervisor') {
+    const { activeDepartment } = await resolveActiveDepartmentForDepartmentId(user.department_id, preferredFiscalYear);
+    return activeDepartment?.id ? [activeDepartment.id] : [user.department_id];
+  }
+
+  const { relatedDepartments, activeDepartment } = await resolveActiveDepartmentForDepartmentId(user.department_id, preferredFiscalYear);
+  if (relatedDepartments.length) {
+    return relatedDepartments.map((department) => department.id);
+  }
+
+  return activeDepartment?.id ? [activeDepartment.id] : [user.department_id];
+};
+
+const syncUserDepartmentToActiveYear = async (userId, departmentId, preferredFiscalYear) => {
+  const { activeDepartment } = await resolveActiveDepartmentForDepartmentId(departmentId, preferredFiscalYear);
+  if (!activeDepartment) return null;
+
+  if (activeDepartment.id !== departmentId) {
+    await supabase
+      .from('users')
+      .update({
+        department_id: activeDepartment.id,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', userId);
+  }
+
+  return activeDepartment;
+};
+
+const ensureDepartmentsForFiscalYear = async (fiscalYear, options = {}) => {
+  const { data: departments, error } = await supabase
+    .from('departments')
+    .select('id, name, fiscal_year, annual_budget, petty_cash_balance, used_budget, updated_at, created_at')
+    .order('fiscal_year', { ascending: false })
+    .order('updated_at', { ascending: false });
+
+  if (error) throw error;
+
+  const seedCanonicalName = toCanonicalDepartmentName(options.seedName || '');
+  const departmentMap = new Map();
+
+  (departments || []).forEach((department) => {
+    const canonicalName = toCanonicalDepartmentName(department.name);
+    const existing = departmentMap.get(canonicalName) || [];
+    existing.push({
+      ...department,
+      name: canonicalName
+    });
+    departmentMap.set(canonicalName, existing);
+  });
+
+  const missingPayload = CANONICAL_DEPARTMENTS
+    .filter((canonicalName) => !(departmentMap.get(canonicalName) || []).some((department) => Number(department.fiscal_year) === fiscalYear))
+    .map((canonicalName) => {
+      const latestDepartment = pickMostRelevantDepartment(departmentMap.get(canonicalName) || [], fiscalYear);
+      const annualBudget =
+        canonicalName === seedCanonicalName && typeof options.seedAnnualBudget === 'number'
+          ? options.seedAnnualBudget
+          : Number(latestDepartment?.annual_budget || 0);
+
+      return {
+        name: canonicalName,
+        annual_budget: annualBudget,
+        used_budget: 0,
+        petty_cash_balance: 0,
+        fiscal_year: fiscalYear,
+        updated_at: new Date().toISOString()
+      };
+    });
+
+  if (missingPayload.length) {
+    const { error: insertError } = await supabase.from('departments').insert(missingPayload);
+    if (insertError) throw insertError;
+  }
+
+  const { data: yearDepartments, error: yearDepartmentsError } = await supabase
+    .from('departments')
+    .select('*')
+    .eq('fiscal_year', fiscalYear)
+    .order('name', { ascending: true });
+
+  if (yearDepartmentsError) throw yearDepartmentsError;
+  return yearDepartments || [];
 };
 
 const canAccessRequest = (user, request) => {
@@ -288,7 +443,12 @@ const getRequestForUser = async (requestId, user) => {
     return { error: error || { message: 'Request not found' }, status: 404 };
   }
 
-  if (!canAccessRequest(user, request)) {
+  if (user?.role === 'supervisor') {
+    const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(user, await getLatestConfiguredFiscalYear());
+    if (!accessibleDepartmentIds.includes(request.department_id)) {
+      return { error: { message: 'Forbidden' }, status: 403 };
+    }
+  } else if (!canAccessRequest(user, request)) {
     return { error: { message: 'Forbidden' }, status: 403 };
   }
 
@@ -793,6 +953,7 @@ app.patch('/api/auth/profile', authenticate, async (req, res) => {
         .from('expense_requests')
         .update({
           department_id: department.id,
+          fiscal_year: department.fiscal_year,
           updated_at: new Date()
         })
         .eq('employee_id', req.user.id),
@@ -899,7 +1060,16 @@ app.get('/api/auth/me', authenticate, async (req, res) => {
       .single();
 
     if (error) return res.status(400).json({ error });
-    res.json(userData);
+    const activeDepartment = await syncUserDepartmentToActiveYear(
+      req.user.id,
+      userData.department_id,
+      await getLatestConfiguredFiscalYear()
+    );
+    res.json({
+      ...userData,
+      department_id: activeDepartment?.id || userData.department_id,
+      fiscal_year: activeDepartment?.fiscal_year ?? null
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -908,11 +1078,15 @@ app.get('/api/auth/me', authenticate, async (req, res) => {
 // Requests routes
 app.get('/api/requests', authenticate, async (req, res) => {
   try {
+    const activeFiscalYear = await getLatestConfiguredFiscalYear();
     let query = supabase.from('expense_requests').select(REQUEST_RELATIONS_SELECT);
     if (req.user.role === 'employee') {
       query = query.eq('employee_id', req.user.id);
     } else if (req.user.role === 'supervisor') {
-      query = query.eq('department_id', req.user.department_id);
+      const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(req.user, activeFiscalYear);
+      query = accessibleDepartmentIds.length
+        ? query.in('department_id', accessibleDepartmentIds)
+        : query.eq('department_id', req.user.department_id);
     }
 
     const { data, error } = await query;
@@ -928,6 +1102,8 @@ app.post('/api/requests', authenticate, authorize(['employee']), async (req, res
   try {
     const { item_name, category, amount, purpose, priority } = req.body;
     const normalizedAmount = toNumber(amount);
+    const activeFiscalYear = await getLatestConfiguredFiscalYear();
+    const activeDepartment = await syncUserDepartmentToActiveYear(req.user.id, req.user.department_id, activeFiscalYear);
 
     if (!item_name || !category || !purpose) {
       return res.status(400).json({ error: 'Item name, category, and purpose are required' });
@@ -937,6 +1113,10 @@ app.post('/api/requests', authenticate, authorize(['employee']), async (req, res
       return res.status(400).json({ error: 'Amount must be greater than zero' });
     }
 
+    if (!activeDepartment) {
+      return res.status(400).json({ error: 'Your department is not configured for the active fiscal year yet.' });
+    }
+
     const request_code = `REQ-${Date.now()}`;
 
     const { data, error } = await supabase
@@ -944,7 +1124,8 @@ app.post('/api/requests', authenticate, authorize(['employee']), async (req, res
       .insert({
         request_code,
         employee_id: req.user.id,
-        department_id: req.user.department_id,
+        department_id: activeDepartment.id,
+        fiscal_year: activeDepartment.fiscal_year,
         item_name,
         category,
         amount: normalizedAmount,
@@ -981,7 +1162,10 @@ app.get('/api/requests/:id', authenticate, async (req, res) => {
       .single();
     if (error) return res.status(400).json({ error });
     if (req.user.role === 'employee' && data.employee_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
-    if (req.user.role === 'supervisor' && data.department_id !== req.user.department_id) return res.status(403).json({ error: 'Forbidden' });
+    if (req.user.role === 'supervisor') {
+      const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(req.user, await getLatestConfiguredFiscalYear());
+      if (!accessibleDepartmentIds.includes(data.department_id)) return res.status(403).json({ error: 'Forbidden' });
+    }
 
     const { summaryByDepartmentId, allocationsByRequestId } = await buildDepartmentBudgetSummaryMapV2();
     res.json(enrichRequestsV2([data], summaryByDepartmentId, allocationsByRequestId)[0]);
@@ -1025,11 +1209,16 @@ app.post('/api/departments', authenticate, authorize(['accounting', 'admin']), a
 
     const normalizedName = String(name).trim();
     const normalizedFiscalYear = Number.parseInt(fiscal_year, 10);
+    const canonicalDepartmentName = toCanonicalDepartmentName(normalizedName);
+
+    if (!canonicalDepartmentName) {
+      return res.status(400).json({ error: 'Department name is required' });
+    }
 
     const { data: existingDepartment, error: existingDepartmentError } = await supabase
       .from('departments')
       .select('id, name, fiscal_year')
-      .ilike('name', normalizedName)
+      .ilike('name', canonicalDepartmentName)
       .eq('fiscal_year', normalizedFiscalYear)
       .maybeSingle();
 
@@ -1038,21 +1227,20 @@ app.post('/api/departments', authenticate, authorize(['accounting', 'admin']), a
       return res.status(409).json({ error: 'A department with this name and fiscal year already exists.' });
     }
 
-    const payload = {
-      name: normalizedName,
-      annual_budget: toNumber(annual_budget),
-      fiscal_year: normalizedFiscalYear,
-      updated_at: new Date()
-    };
+    const yearDepartments = await ensureDepartmentsForFiscalYear(normalizedFiscalYear, {
+      seedName: canonicalDepartmentName,
+      seedAnnualBudget: toNumber(annual_budget)
+    });
+    const createdDepartment = yearDepartments.find((department) => String(department.name).trim().toLowerCase() === canonicalDepartmentName.toLowerCase());
 
-    const { data, error } = await supabase
-      .from('departments')
-      .insert(payload)
-      .select()
-      .single();
+    if (!createdDepartment) {
+      return res.status(400).json({ error: 'Unable to provision the fiscal year departments.' });
+    }
 
-    if (error) return res.status(400).json({ error });
-    res.status(201).json(data);
+    res.status(201).json({
+      ...createdDepartment,
+      generated_departments: yearDepartments
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1590,17 +1778,28 @@ app.get('/api/reports/filter-options', authenticate, async (req, res) => {
   try {
     let requestQuery = supabase
       .from('expense_requests')
-      .select('category, department_id')
+      .select('category, department_id, fiscal_year')
       .order('category', { ascending: true });
 
     let departmentQuery = supabase
       .from('departments')
-      .select('id, name')
+      .select('id, name, fiscal_year')
       .order('name', { ascending: true });
 
     if (req.user.role === 'employee' || req.user.role === 'supervisor') {
-      requestQuery = requestQuery.eq('department_id', req.user.department_id);
-      departmentQuery = departmentQuery.eq('id', req.user.department_id);
+      const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(req.user, await getLatestConfiguredFiscalYear());
+      if (req.user.role === 'employee') {
+        const activeDepartmentId = accessibleDepartmentIds[0] || req.user.department_id;
+        requestQuery = requestQuery.eq('department_id', activeDepartmentId);
+        departmentQuery = departmentQuery.eq('id', activeDepartmentId);
+      } else {
+        requestQuery = accessibleDepartmentIds.length
+          ? requestQuery.in('department_id', accessibleDepartmentIds)
+          : requestQuery.eq('department_id', req.user.department_id);
+        departmentQuery = accessibleDepartmentIds.length
+          ? departmentQuery.in('id', accessibleDepartmentIds)
+          : departmentQuery.eq('id', req.user.department_id);
+      }
     }
 
     const [{ data: requestRows, error: requestError }, { data: departments, error: departmentError }] = await Promise.all([
@@ -1635,7 +1834,15 @@ app.get('/api/reports/filter-options', authenticate, async (req, res) => {
 
     res.json({
       departments: Array.from(uniqueDepartments.values()).sort((left, right) => left.name.localeCompare(right.name)),
-      categories
+      categories,
+      fiscal_years: Array.from(
+        new Set(
+          [
+            ...(requestRows || []).map((row) => Number(row.fiscal_year || 0)),
+            ...(departments || []).map((department) => Number(department.fiscal_year || 0))
+          ].filter((year) => Number.isInteger(year) && year > 0)
+        )
+      ).sort((left, right) => right - left)
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1644,16 +1851,20 @@ app.get('/api/reports/filter-options', authenticate, async (req, res) => {
 
 app.get('/api/reports/summary', authenticate, async (req, res) => {
   try {
-    const { dept, from, to, status, category } = req.query;
-    let query = supabase.from('expense_requests').select('*');
+    const { dept, from, to, status, category, fiscal_year } = req.query;
+    let query = supabase.from('expense_requests').select(REQUESTS_REPORT_SELECT);
 
     if (req.user.role === 'employee') {
       query = query.eq('employee_id', req.user.id);
     } else if (req.user.role === 'supervisor') {
-      query = query.eq('department_id', req.user.department_id);
+      const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(req.user, await getLatestConfiguredFiscalYear());
+      query = accessibleDepartmentIds.length
+        ? query.in('department_id', accessibleDepartmentIds)
+        : query.eq('department_id', req.user.department_id);
     }
 
     if (dept) query = query.eq('department_id', dept);
+    if (fiscal_year) query = query.eq('fiscal_year', Number(fiscal_year));
     if (from) query = query.gte('submitted_at', from);
     if (to) query = query.lte('submitted_at', to);
     if (status) query = query.eq('status', status);
@@ -1677,16 +1888,20 @@ app.get('/api/reports/summary', authenticate, async (req, res) => {
 
 app.get('/api/reports/requests', authenticate, async (req, res) => {
   try {
-    const { dept, from, to, status, category } = req.query;
+    const { dept, from, to, status, category, fiscal_year } = req.query;
     let query = supabase.from('expense_requests').select(REQUESTS_REPORT_SELECT);
 
     if (req.user.role === 'employee') {
       query = query.eq('employee_id', req.user.id);
     } else if (req.user.role === 'supervisor') {
-      query = query.eq('department_id', req.user.department_id);
+      const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(req.user, await getLatestConfiguredFiscalYear());
+      query = accessibleDepartmentIds.length
+        ? query.in('department_id', accessibleDepartmentIds)
+        : query.eq('department_id', req.user.department_id);
     }
 
     if (dept) query = query.eq('department_id', dept);
+    if (fiscal_year) query = query.eq('fiscal_year', Number(fiscal_year));
     if (from) query = query.gte('submitted_at', from);
     if (to) query = query.lte('submitted_at', to);
     if (status) query = query.eq('status', status);

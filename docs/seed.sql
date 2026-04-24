@@ -35,16 +35,23 @@ WHERE name IN (
 );
 
 -- Insert departments if they do not already exist
+WITH active_year AS (
+  SELECT EXTRACT(YEAR FROM CURRENT_DATE)::INT AS fiscal_year
+)
 INSERT INTO departments (name, annual_budget, fiscal_year)
 SELECT name, annual_budget, fiscal_year
-FROM (VALUES
-  ('IT Department', 500000.00, 2024),
-  ('Purchasing Department', 400000.00, 2024),
-  ('Planning Department', 350000.00, 2024),
-  ('Logistics Department', 450000.00, 2024),
-  ('HR Department', 200000.00, 2024),
-  ('Finance Department', 300000.00, 2024),
-  ('Admin Department', 250000.00, 2024)
+FROM (
+  SELECT department_rows.name, department_rows.annual_budget, active_year.fiscal_year
+  FROM (VALUES
+    ('IT Department', 500000.00),
+    ('Purchasing Department', 400000.00),
+    ('Planning Department', 350000.00),
+    ('Logistics Department', 450000.00),
+    ('HR Department', 200000.00),
+    ('Finance Department', 300000.00),
+    ('Admin Department', 250000.00)
+  ) AS department_rows(name, annual_budget)
+  CROSS JOIN active_year
 ) AS vals(name, annual_budget, fiscal_year)
 WHERE NOT EXISTS (
   SELECT 1

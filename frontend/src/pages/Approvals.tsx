@@ -203,6 +203,14 @@ const Approvals = () => {
     [departments]
   );
 
+  const departmentOptionsWithFiscalYear = departmentOptions.map((option) => {
+    const department = departments.find((entry) => entry.id === option.id);
+    return {
+      ...option,
+      label: `${department?.name || 'Department'} • FY ${department?.fiscal_year || 'N/A'} • ${String(option.label || '').split(' • ').slice(1).join(' • ')}`
+    };
+  });
+
   if (!user) return <div className="text-white">Loading...</div>;
 
   return (
@@ -241,6 +249,9 @@ const Approvals = () => {
                     </p>
                     <p className="mt-1 text-sm text-[#D9E1F1]/76">
                       Requesting Department: <span className="font-semibold text-white">{req.department_name || 'Unknown department'}</span>
+                    </p>
+                    <p className="mt-1 text-sm text-[#D9E1F1]/68">
+                      Fiscal Year: <span className="font-semibold text-white">{req.fiscal_year || req.departments?.fiscal_year || 'N/A'}</span>
                     </p>
                     <p className="mt-3 max-w-2xl text-[#D9E1F1]/80">{req.purpose}</p>
                     <div className="mt-4 inline-flex rounded-full border border-[#8FB3E2]/16 bg-[#31487A]/22 px-3 py-1 text-sm font-medium text-white">
@@ -319,7 +330,7 @@ const Approvals = () => {
                                 onChange={(event) => updateAllocationRow(req.id, index, 'department_id', event.target.value)}
                                 className="field-input"
                               >
-                                {departmentOptions.map((option) => (
+                                {departmentOptionsWithFiscalYear.map((option) => (
                                   <option key={option.id} value={option.id}>
                                     {option.label}
                                   </option>

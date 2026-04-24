@@ -3,6 +3,11 @@ import { authenticate, authorize } from '../middleware/auth';
 import { supabase } from '../utils/supabase';
 import { sendEmail } from '../utils/email';
 import {
+  getAccessibleDepartmentIdsForUser,
+  getLatestConfiguredFiscalYear,
+  syncUserDepartmentToActiveYear
+} from '../utils/fiscal';
+import {
   allocationTotalsMatchRequest,
   buildDepartmentBudgetSummaryMap,
   enrichRequests,
@@ -21,11 +26,15 @@ const REQUEST_RELATIONS_SELECT = `
 
 // GET /api/requests - list filtered by role/dept
 router.get('/', authenticate, async (req: any, res) => {
+  const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
   let query = supabase.from('expense_requests').select(REQUEST_RELATIONS_SELECT);
   if (req.user.role === 'employee') {
     query = query.eq('employee_id', req.user.id);
   } else if (req.user.role === 'supervisor') {
-    query = query.eq('department_id', req.user.department_id);
+    const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
+    query = accessibleDepartmentIds.length
+      ? query.in('department_id', accessibleDepartmentIds)
+      : query.eq('department_id', req.user.department_id);
   }
 
   const { data, error } = await query.order('submitted_at', { ascending: false });
@@ -42,13 +51,26 @@ router.get('/', authenticate, async (req: any, res) => {
 // POST /api/requests - submit new
 router.post('/', authenticate, authorize('employee'), async (req: any, res) => {
   const { item_name, category, amount, purpose, priority } = req.body;
+  const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
+  const activeDepartment = await syncUserDepartmentToActiveYear(
+    supabase,
+    req.user.id,
+    req.user.department_id,
+    activeFiscalYear
+  );
+
+  if (!activeDepartment) {
+    return res.status(400).json({ error: 'Your department is not configured for the active fiscal year yet.' });
+  }
+
   const request_code = `REQ-${Date.now()}`;
   const { data, error } = await supabase
     .from('expense_requests')
     .insert({
       request_code,
       employee_id: req.user.id,
-      department_id: req.user.department_id,
+      department_id: activeDepartment.id,
+      fiscal_year: activeDepartment.fiscal_year,
       item_name,
       category,
       amount,
@@ -69,7 +91,17 @@ router.post('/', authenticate, authorize('employee'), async (req: any, res) => {
     note: 'Request submitted'
   });
 
-  const { data: supervisor } = await supabase.from('users').select('email').eq('department_id', req.user.department_id).eq('role', 'supervisor').single();
+  const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(
+    supabase,
+    { role: 'supervisor', department_id: activeDepartment.id },
+    activeDepartment.fiscal_year || activeFiscalYear
+  );
+  const { data: supervisor } = await supabase
+    .from('users')
+    .select('email')
+    .in('department_id', accessibleDepartmentIds.length ? accessibleDepartmentIds : [activeDepartment.id])
+    .eq('role', 'supervisor')
+    .maybeSingle();
   if (supervisor) sendEmail(supervisor.email, 'New Expense Request', `New request ${request_code} submitted.`);
 
   res.json(data);
@@ -77,6 +109,7 @@ router.post('/', authenticate, authorize('employee'), async (req: any, res) => {
 
 // GET /api/requests/:id
 router.get('/:id', authenticate, async (req: any, res) => {
+  const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
   const { data, error } = await supabase
     .from('expense_requests')
     .select(REQUEST_RELATIONS_SELECT)
@@ -84,7 +117,10 @@ router.get('/:id', authenticate, async (req: any, res) => {
     .single();
   if (error) return res.status(400).json({ error });
   if (req.user.role === 'employee' && data.employee_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
-  if (req.user.role === 'supervisor' && data.department_id !== req.user.department_id) return res.status(403).json({ error: 'Forbidden' });
+  if (req.user.role === 'supervisor') {
+    const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
+    if (!accessibleDepartmentIds.includes(data.department_id)) return res.status(403).json({ error: 'Forbidden' });
+  }
 
   try {
     const { summaryByDepartmentId, allocationsByRequestId } = await buildDepartmentBudgetSummaryMap();
@@ -171,6 +207,7 @@ router.patch('/:id/allocations', authenticate, authorize('accounting', 'admin'),
 
 // PATCH /api/requests/:id/approve
 router.patch('/:id/approve', authenticate, authorize('supervisor', 'accounting'), async (req: any, res) => {
+  const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
   const { id } = req.params;
   const { data: request, error: fetchError } = await supabase
     .from('expense_requests')
@@ -178,7 +215,10 @@ router.patch('/:id/approve', authenticate, authorize('supervisor', 'accounting')
     .eq('id', id)
     .single();
   if (fetchError) return res.status(400).json({ error: fetchError });
-  if (req.user.role === 'supervisor' && request.department_id !== req.user.department_id) return res.status(403).json({ error: 'Forbidden' });
+  if (req.user.role === 'supervisor') {
+    const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
+    if (!accessibleDepartmentIds.includes(request.department_id)) return res.status(403).json({ error: 'Forbidden' });
+  }
 
   let newStatus = '';
   let stage = '';
@@ -268,10 +308,14 @@ router.patch('/:id/approve', authenticate, authorize('supervisor', 'accounting')
 
 // PATCH /api/requests/:id/reject
 router.patch('/:id/reject', authenticate, authorize('supervisor', 'accounting'), async (req: any, res) => {
+  const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
   const { id } = req.params;
   const { reason } = req.body;
   const { data: request } = await supabase.from('expense_requests').select('*').eq('id', id).single();
-  if (req.user.role === 'supervisor' && request.department_id !== req.user.department_id) return res.status(403).json({ error: 'Forbidden' });
+  if (req.user.role === 'supervisor') {
+    const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
+    if (!accessibleDepartmentIds.includes(request.department_id)) return res.status(403).json({ error: 'Forbidden' });
+  }
   const stage = req.user.role === 'supervisor' ? 'supervisor' : 'accounting';
   const { data, error } = await supabase
     .from('expense_requests')
