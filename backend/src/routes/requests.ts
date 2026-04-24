@@ -307,12 +307,14 @@ router.get('/', authenticate, async (req: any, res) => {
 
 // POST /api/requests - submit new
 router.post('/', authenticate, authorize('employee'), async (req: any, res) => {
-  const { item_name, category, amount, purpose, priority } = req.body;
+  const { item_name, category, amount, purpose, priority, attachments = [] } = req.body;
   const request_code = `REQ-${Date.now()}`;
+  const activeDepartment = { id: req.user.department_id, fiscal_year: await getLatestConfiguredFiscalYear(supabase) };
+  const normalizedAttachments = normalizeAttachments(attachments);
   const { data, error } = await supabase
     .from('expense_requests')
     .insert({
-      request_code: requestCode,
+      request_code: request_code,
       employee_id: req.user.id,
       department_id: activeDepartment.id,
       fiscal_year: activeDepartment.fiscal_year,
@@ -326,11 +328,11 @@ router.post('/', authenticate, authorize('employee'), async (req: any, res) => {
     })
     .select()
     .single();
-  if (error) return res.status(400).json({ error });
+  if (error || !data) return res.status(400).json({ error: error || 'Failed to create request' });
 
   if (normalizedAttachments.length) {
     const { error: attachmentError } = await supabase.from('request_attachments').insert(
-      normalizedAttachments.map((attachment) => ({
+      normalizedAttachments.map((attachment: AttachmentInput) => ({
         request_id: data.id,
         attachment_scope: attachment.attachment_scope,
         attachment_type: attachment.attachment_type || null,
@@ -352,7 +354,7 @@ router.post('/', authenticate, authorize('employee'), async (req: any, res) => {
   });
 
   const { data: supervisor } = await supabase.from('users').select('email').eq('department_id', req.user.department_id).eq('role', 'supervisor').single();
-  if (supervisor) sendEmail(supervisor.email, 'New Expense Request', `New request ${request_code} submitted.`);
+  if (supervisor?.email) sendEmail(supervisor.email, 'New Expense Request', `New request ${request_code} submitted.`);
 
   const responseRows = await appendWorkflowDataToRequests([{ ...data, attachments: normalizedAttachments }]);
   res.json(responseRows[0]);
