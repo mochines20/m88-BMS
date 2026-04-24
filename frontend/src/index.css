@@ -187,6 +187,47 @@
     animation: pulseOrb 1.8s ease-in-out infinite;
   }
 
+  .approval-card {
+    transition:
+      border-color 220ms ease,
+      background-color 220ms ease,
+      box-shadow 220ms ease;
+  }
+
+  .approval-card-closed {
+    padding-top: 1.1rem;
+    padding-bottom: 1.1rem;
+  }
+
+  .approval-card-description {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+
+  .approval-card-details {
+    overflow: hidden;
+    transition:
+      max-height 320ms cubic-bezier(0.16, 1, 0.3, 1),
+      opacity 220ms ease,
+      transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
+    transform-origin: top;
+  }
+
+  .approval-card-details-open {
+    max-height: 2800px;
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .approval-card-details-closed {
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-8px);
+    pointer-events: none;
+  }
+
   .stat-label {
     @apply text-sm font-medium uppercase tracking-[0.18em];
     color: rgba(217, 225, 241, 0.72);

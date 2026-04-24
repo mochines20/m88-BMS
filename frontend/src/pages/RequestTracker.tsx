@@ -21,6 +21,8 @@ const getStatusLabel = (status: string) => {
       return 'Waiting for Supervisor Approval';
     case 'pending_accounting':
       return 'Waiting for Accounting Approval';
+    case 'returned_for_revision':
+      return 'Returned for Revision';
     case 'released':
       return 'Released';
     case 'approved':
@@ -38,6 +40,7 @@ const getStatusColor = (status: string) => {
     case 'pending_accounting': return 'border-[#8FB3E2]/32 bg-[#8FB3E2]/18 text-[#D9E1F1]';
     case 'approved':
     case 'released': return 'border-[#D9E1F1]/24 bg-[#D9E1F1]/12 text-[#D9E1F1]';
+    case 'returned_for_revision': return 'border-[#8FB3E2]/22 bg-[#31487A]/24 text-[#D9E1F1]';
     case 'rejected': return 'border-[#8FB3E2]/18 bg-[#192338] text-[#D9E1F1]/84';
     default: return 'border-[#8FB3E2]/14 bg-[#1E2F4F]/60 text-white';
   }
@@ -53,13 +56,13 @@ const buildFlow = (status: string) => [
   {
     key: 'supervisor',
     label: 'Supervisor Review',
-    description: status === 'pending_supervisor' ? 'Waiting for supervisor approval.' : 'Supervisor stage completed.',
-    state: status === 'pending_supervisor' ? 'current' : ['pending_accounting', 'approved', 'released', 'rejected'].includes(status) ? 'done' : 'idle'
+    description: status === 'pending_supervisor' ? 'Waiting for supervisor approval.' : status === 'returned_for_revision' ? 'Returned during review.' : 'Supervisor stage completed.',
+    state: status === 'pending_supervisor' ? 'current' : ['pending_accounting', 'approved', 'released', 'rejected', 'returned_for_revision'].includes(status) ? 'done' : 'idle'
   },
   {
     key: 'accounting',
     label: 'Accounting Review',
-    description: status === 'pending_accounting' ? 'Waiting for accounting approval.' : 'Accounting stage completed.',
+    description: status === 'pending_accounting' ? 'Waiting for accounting approval.' : status === 'returned_for_revision' ? 'Returned for correction.' : 'Accounting stage completed.',
     state: status === 'pending_accounting' ? 'current' : ['approved', 'released'].includes(status) ? 'done' : 'idle'
   },
   {
@@ -74,6 +77,7 @@ const RequestTracker = () => {
   const [requests, setRequests] = useState<any[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
   const [timeline, setTimeline] = useState<any[]>([]);
+  const [liquidationDraft, setLiquidationDraft] = useState({ actual_amount: '', remarks: '' });
 
   useEffect(() => {
     fetchRequests();
@@ -128,6 +132,44 @@ const RequestTracker = () => {
     () => timeline.filter((log: any) => log.approval_side === 'accounting'),
     [timeline]
   );
+
+  const resubmitRequest = async () => {
+    if (!selectedRequest) return;
+    const token = localStorage.getItem('token');
+    try {
+      await api.patch(
+        `/api/requests/${selectedRequest.id}/resubmit`,
+        { purpose: selectedRequest.purpose },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      toast.success('Request resubmitted!');
+      await fetchRequests(false);
+      await fetchTimeline(selectedRequest.id, false);
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Resubmission failed');
+    }
+  };
+
+  const submitLiquidation = async () => {
+    if (!selectedRequest) return;
+    const token = localStorage.getItem('token');
+    try {
+      await api.patch(
+        `/api/requests/${selectedRequest.id}/liquidation`,
+        {
+          actual_amount: Number(liquidationDraft.actual_amount),
+          remarks: liquidationDraft.remarks
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      toast.success('Liquidation submitted!');
+      setLiquidationDraft({ actual_amount: '', remarks: '' });
+      await fetchRequests(false);
+      await fetchTimeline(selectedRequest.id, false);
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Liquidation failed');
+    }
+  };
 
   return (
     <div className="text-white">
@@ -245,6 +287,54 @@ const RequestTracker = () => {
               </div>
             )}
 
+            {selectedRequest.attachments?.length > 0 && (
+              <div className="mt-4">
+                <h3 className="text-lg font-semibold text-white">Supporting Documents</h3>
+                <div className="mt-3 space-y-3">
+                  {selectedRequest.attachments.map((attachment: any) => (
+                    <div key={attachment.id} className="panel-muted flex items-center justify-between gap-4">
+                      <div>
+                        <p className="font-semibold text-white">{attachment.file_name}</p>
+                        <p className="mt-1 text-sm uppercase tracking-[0.12em] text-[#D9E1F1]/60">{attachment.attachment_type || attachment.attachment_scope}</p>
+                      </div>
+                      <a className="btn-secondary" href={attachment.file_url} target="_blank" rel="noreferrer">
+                        Open
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {selectedRequest.release_method && (
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="panel-muted">
+                  <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/60">Release Method</p>
+                  <p className="mt-2 text-lg font-semibold text-white capitalize">{selectedRequest.release_method.replace(/_/g, ' ')}</p>
+                </div>
+                <div className="panel-muted">
+                  <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/60">Reference</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{selectedRequest.release_reference_no || 'No reference'}</p>
+                </div>
+              </div>
+            )}
+
+            {selectedRequest.latest_liquidation && (
+              <div className="panel-muted mt-4">
+                <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/60">Latest Liquidation</p>
+                <p className="mt-2 text-lg font-semibold capitalize text-white">{selectedRequest.latest_liquidation.status.replace(/_/g, ' ')}</p>
+                <p className="mt-2 text-sm text-[#D9E1F1]/76">
+                  Due: {selectedRequest.latest_liquidation.due_at ? new Date(selectedRequest.latest_liquidation.due_at).toLocaleDateString() : 'No due date'}
+                </p>
+                <p className="mt-1 text-sm text-[#D9E1F1]/76">
+                  Actual amount: {selectedRequest.latest_liquidation.actual_amount ? formatMoney(toNumber(selectedRequest.latest_liquidation.actual_amount)) : 'Not submitted'}
+                </p>
+                {selectedRequest.latest_liquidation.remarks && (
+                  <p className="mt-1 text-sm text-[#D9E1F1]/76">{selectedRequest.latest_liquidation.remarks}</p>
+                )}
+              </div>
+            )}
+
             <div className="panel-muted mt-4">
               <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/60">Purpose</p>
               <p className="mt-2 text-[#D9E1F1]/88">{selectedRequest.purpose || 'No purpose provided.'}</p>
@@ -291,6 +381,42 @@ const RequestTracker = () => {
               <div className="panel-muted mt-6 border-[#8FB3E2]/16 bg-[#192338]">
                 <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/68">Rejection Reason</p>
                 <p className="mt-2 text-[#D9E1F1]">{selectedRequest.rejection_reason}</p>
+              </div>
+            )}
+
+            {selectedRequest.return_reason && (
+              <div className="panel-muted mt-6 border-[#8FB3E2]/16 bg-[#192338]">
+                <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/68">Return Reason</p>
+                <p className="mt-2 text-[#D9E1F1]">{selectedRequest.return_reason}</p>
+                <p className="mt-2 text-xs text-[#D9E1F1]/56">Revision count: {selectedRequest.revision_count || 0}</p>
+                <button className="btn-primary mt-4" onClick={() => void resubmitRequest()}>
+                  Resubmit Request
+                </button>
+              </div>
+            )}
+
+            {selectedRequest.status === 'released' && (
+              <div className="panel-muted mt-6">
+                <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/68">Submit Liquidation</p>
+                <div className="mt-4 grid grid-cols-1 gap-3">
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="field-input"
+                    placeholder="Actual amount spent"
+                    value={liquidationDraft.actual_amount}
+                    onChange={(event) => setLiquidationDraft((current) => ({ ...current, actual_amount: event.target.value }))}
+                  />
+                  <textarea
+                    className="field-input min-h-[120px]"
+                    placeholder="Liquidation remarks"
+                    value={liquidationDraft.remarks}
+                    onChange={(event) => setLiquidationDraft((current) => ({ ...current, remarks: event.target.value }))}
+                  />
+                  <button className="btn-primary" onClick={() => void submitLiquidation()}>
+                    Submit Liquidation
+                  </button>
+                </div>
               </div>
             )}
 
