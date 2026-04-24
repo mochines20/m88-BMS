@@ -76,20 +76,16 @@ const buildFlow = (status: string) => [
 const RequestTracker = () => {
   const [requests, setRequests] = useState<any[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
-  const [timeline, setTimeline] = useState<any[]>([]);
   const [liquidationDraft, setLiquidationDraft] = useState({ actual_amount: '', remarks: '' });
 
   useEffect(() => {
     fetchRequests();
     const intervalId = window.setInterval(() => {
       fetchRequests(false);
-      if (selectedRequest?.id) {
-        fetchTimeline(selectedRequest.id, false);
-      }
     }, 5000);
 
     return () => window.clearInterval(intervalId);
-  }, [selectedRequest?.id]);
+  }, []);
 
   const fetchRequests = async (showError = true) => {
     const token = localStorage.getItem('token');
@@ -103,34 +99,15 @@ const RequestTracker = () => {
         }
       } else if (res.data.length > 0) {
         setSelectedRequest(res.data[0]);
-        fetchTimeline(res.data[0].id, false);
       }
     } catch {
       if (showError) toast.error('Failed to fetch requests');
     }
   };
 
-  const fetchTimeline = async (id: string, showError = true) => {
-    const token = localStorage.getItem('token');
-    try {
-      const res = await api.get(`/api/requests/${id}/timeline`, { headers: { Authorization: `Bearer ${token}` } });
-      setTimeline(res.data);
-    } catch {
-      if (showError) toast.error('Failed to fetch timeline');
-    }
-  };
-
   const selectedFlow = useMemo(
     () => (selectedRequest ? buildFlow(selectedRequest.status) : []),
     [selectedRequest]
-  );
-  const supervisorLogs = useMemo(
-    () => timeline.filter((log: any) => log.approval_side === 'supervisor' || log.action === 'submitted'),
-    [timeline]
-  );
-  const accountingLogs = useMemo(
-    () => timeline.filter((log: any) => log.approval_side === 'accounting'),
-    [timeline]
   );
 
   const resubmitRequest = async () => {
@@ -144,7 +121,6 @@ const RequestTracker = () => {
       );
       toast.success('Request resubmitted!');
       await fetchRequests(false);
-      await fetchTimeline(selectedRequest.id, false);
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Resubmission failed');
     }
@@ -165,7 +141,6 @@ const RequestTracker = () => {
       toast.success('Liquidation submitted!');
       setLiquidationDraft({ actual_amount: '', remarks: '' });
       await fetchRequests(false);
-      await fetchTimeline(selectedRequest.id, false);
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Liquidation failed');
     }
@@ -186,7 +161,6 @@ const RequestTracker = () => {
               className={`panel cursor-pointer transition hover:border-white/20 hover:bg-slate-950/45 ${selectedRequest?.id === req.id ? 'border-[#8FB3E2]/28 bg-[#31487A]/18' : ''}`}
               onClick={() => {
                 setSelectedRequest(req);
-                fetchTimeline(req.id);
               }}
             >
               <div className="mb-4 flex items-start justify-between gap-4">
@@ -419,34 +393,6 @@ const RequestTracker = () => {
                 </div>
               </div>
             )}
-
-            <h3 className="mt-8 text-xl font-bold text-white">Timeline</h3>
-            <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-              <div className="space-y-3">
-                <h4 className="text-sm font-semibold uppercase tracking-[0.14em] text-[#D9E1F1]/60">Supervisor Side</h4>
-                {supervisorLogs.map((log: any) => (
-                  <div key={log.id} className="panel-muted">
-                    <p className="font-semibold capitalize text-white">{log.action} • {log.stage}</p>
-                    <p className="mt-1 text-sm text-[#D9E1F1]/80">{log.note || 'No note provided.'}</p>
-                    <p className="mt-2 text-xs text-[#D9E1F1]/56">
-                      {log.actor_name || 'System'} {log.actor_role ? `• ${log.actor_role}` : ''} • {new Date(log.timestamp).toLocaleString()}
-                    </p>
-                  </div>
-                ))}
-              </div>
-              <div className="space-y-3">
-                <h4 className="text-sm font-semibold uppercase tracking-[0.14em] text-[#D9E1F1]/60">Accounting Side</h4>
-                {accountingLogs.map((log: any) => (
-                  <div key={log.id} className="panel-muted">
-                    <p className="font-semibold capitalize text-white">{log.action} • {log.stage}</p>
-                    <p className="mt-1 text-sm text-[#D9E1F1]/80">{log.note || 'No note provided.'}</p>
-                    <p className="mt-2 text-xs text-[#D9E1F1]/56">
-                      {log.actor_name || 'System'} {log.actor_role ? `• ${log.actor_role}` : ''} • {new Date(log.timestamp).toLocaleString()}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         )}
       </div>

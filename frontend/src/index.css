@@ -74,20 +74,20 @@
   }
 
   .page-header {
-    @apply mb-8 space-y-2;
+    @apply mb-6 space-y-2 sm:mb-8;
   }
 
   .page-title {
-    @apply text-4xl font-bold tracking-tight text-white md:text-5xl;
+    @apply text-3xl font-bold tracking-tight text-white md:text-5xl;
   }
 
   .page-subtitle {
-    @apply max-w-3xl text-base md:text-lg;
+    @apply max-w-full text-sm md:text-lg;
     color: rgba(217, 225, 241, 0.8);
   }
 
   .panel {
-    @apply rounded-[28px] border p-6 shadow-[0_24px_80px_rgba(8,14,28,0.42)] backdrop-blur-xl;
+    @apply rounded-[28px] border p-4 sm:p-6 shadow-[0_24px_80px_rgba(8,14,28,0.42)] backdrop-blur-xl;
     border-color: rgba(143, 179, 226, 0.16);
     background-color: rgba(30, 47, 79, 0.58);
     transition:
@@ -98,7 +98,7 @@
   }
 
   .panel-muted {
-    @apply rounded-2xl border p-4 backdrop-blur-md;
+    @apply rounded-2xl border p-3 sm:p-4 backdrop-blur-md;
     border-color: rgba(143, 179, 226, 0.14);
     background-color: rgba(49, 72, 122, 0.28);
     transition:

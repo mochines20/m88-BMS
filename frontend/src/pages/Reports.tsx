@@ -70,12 +70,14 @@ const Reports = () => {
     from: '',
     to: '',
     status: '',
+    archived: 'false',
     category: ''
   });
   const [summary, setSummary] = useState<any>(null);
   const [requests, setRequests] = useState<any[]>([]);
   const [summaryLoaded, setSummaryLoaded] = useState(false);
   const [requestsLoaded, setRequestsLoaded] = useState(false);
+  const [user, setUser] = useState<any>(null);
   const [filterOptions, setFilterOptions] = useState<ReportFilterOptions>({
     departments: [],
     categories: [],
@@ -85,6 +87,15 @@ const Reports = () => {
   const getAuthHeaders = () => {
     const token = localStorage.getItem('token');
     return { Authorization: `Bearer ${token}` };
+  };
+
+  const fetchUser = async () => {
+    try {
+      const res = await api.get('/api/auth/me', { headers: getAuthHeaders() });
+      setUser(res.data);
+    } catch {
+      // User not authenticated
+    }
   };
 
   const fetchFallbackFilterOptions = async () => {
@@ -168,6 +179,7 @@ const Reports = () => {
   };
 
   useEffect(() => {
+    void fetchUser();
     void fetchFilterOptions();
     void fetchSummary();
   }, []);
@@ -188,6 +200,17 @@ const Reports = () => {
       toast.success('Report exported!');
     } catch {
       toast.error('Export failed');
+    }
+  };
+
+  const archiveRequest = async (requestId: string, archived: boolean) => {
+    try {
+      await api.patch(`/api/requests/${requestId}/archive`, { archived }, { headers: getAuthHeaders() });
+      toast.success(`Request ${archived ? 'archived' : 'unarchived'} successfully!`);
+      // Refresh the requests data
+      void fetchRequests();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Archive operation failed');
     }
   };
 
@@ -227,6 +250,11 @@ const Reports = () => {
             <option value="pending_accounting">Pending Accounting</option>
             <option value="returned_for_revision">Returned for Revision</option>
             <option value="released">Released</option>
+          </select>
+          <select className="field-input" value={filters.archived} onChange={e => setFilters({ ...filters, archived: e.target.value })}>
+            <option value="false">Active Requests</option>
+            <option value="archived">Archived Requests</option>
+            <option value="all">All Requests</option>
           </select>
           <select className="field-input" value={filters.category} onChange={e => setFilters({ ...filters, category: e.target.value })}>
             <option value="">All Categories</option>
@@ -292,6 +320,7 @@ const Reports = () => {
                   <th className="p-4">Amount</th>
                   <th className="p-4">Status</th>
                   <th className="p-4">Submitted</th>
+                  {user?.role === 'accounting' && <th className="p-4">Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -306,6 +335,20 @@ const Reports = () => {
                     <td className="p-4">PHP {Number(req.amount).toFixed(2)}</td>
                     <td className="p-4 capitalize">{req.status.replace('_', ' ')}</td>
                     <td className="p-4">{req.submitted_at ? new Date(req.submitted_at).toLocaleDateString() : '-'}</td>
+                    {user?.role === 'accounting' && (
+                      <td className="p-4">
+                        {['released', 'rejected'].includes(req.status) && (
+                          <button
+                            onClick={() => archiveRequest(req.id, !req.archived)}
+                            className={`btn-secondary !px-3 !py-1 !text-xs ${
+                              req.archived ? '!bg-green-600 hover:!bg-green-700' : '!bg-orange-600 hover:!bg-orange-700'
+                            }`}
+                          >
+                            {req.archived ? 'Unarchive' : 'Archive'}
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

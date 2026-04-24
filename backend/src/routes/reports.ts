@@ -108,10 +108,10 @@ router.get('/filter-options', authenticate, async (req: any, res) => {
   });
 });
 
-// GET /api/reports/summary?dept=&from=&to=&format=json|pdf|excel
+// GET /api/reports/summary?dept=&from=&to=&archived=false&format=json|pdf|excel
 router.get('/summary', authenticate, async (req: any, res) => {
   const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
-  const { dept, from, to, status, category, fiscal_year, format } = req.query;
+  const { dept, from, to, status, category, fiscal_year, archived = 'false', format } = req.query;
   let query = supabase.from('expense_requests').select(REQUESTS_DEPARTMENT_SELECT);
   if (req.user.role === 'employee') query = query.eq('employee_id', req.user.id);
   else if (req.user.role === 'supervisor') {
@@ -126,6 +126,8 @@ router.get('/summary', authenticate, async (req: any, res) => {
   if (to) query = query.lte('submitted_at', to);
   if (status) query = query.eq('status', status);
   if (category) query = query.eq('category', category);
+  if (archived === 'true') query = query.eq('archived', true);
+  else if (archived === 'false') query = query.eq('archived', false);
   const { data: requests, error } = await query;
   if (error) return res.status(400).json({ error });
 
@@ -175,10 +177,10 @@ router.get('/summary', authenticate, async (req: any, res) => {
   }
 });
 
-// GET /api/reports/requests?dept=&from=&to=&status=&category=&format=json|pdf|excel
+// GET /api/reports/requests?dept=&from=&to=&archived=false&status=&category=&format=json|pdf|excel
 router.get('/requests', authenticate, async (req: any, res) => {
   const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
-  const { dept, from, to, status, category, fiscal_year, format } = req.query;
+  const { dept, from, to, status, category, fiscal_year, archived = 'false', format } = req.query;
   let query = supabase.from('expense_requests').select(REQUESTS_REPORT_SELECT);
   if (req.user.role === 'employee') query = query.eq('employee_id', req.user.id);
   else if (req.user.role === 'supervisor') {
@@ -193,6 +195,8 @@ router.get('/requests', authenticate, async (req: any, res) => {
   if (to) query = query.lte('submitted_at', to);
   if (status) query = query.eq('status', status);
   if (category) query = query.eq('category', category);
+  if (archived === 'true') query = query.eq('archived', true);
+  else if (archived === 'false') query = query.eq('archived', false);
   const { data: requests, error } = await query;
   if (error) return res.status(400).json({ error });
 

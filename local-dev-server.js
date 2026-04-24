@@ -1851,7 +1851,7 @@ app.get('/api/reports/filter-options', authenticate, async (req, res) => {
 
 app.get('/api/reports/summary', authenticate, async (req, res) => {
   try {
-    const { dept, from, to, status, category, fiscal_year } = req.query;
+    const { dept, from, to, status, category, fiscal_year, archived = 'false' } = req.query;
     let query = supabase.from('expense_requests').select(REQUESTS_REPORT_SELECT);
 
     if (req.user.role === 'employee') {
@@ -1869,6 +1869,8 @@ app.get('/api/reports/summary', authenticate, async (req, res) => {
     if (to) query = query.lte('submitted_at', to);
     if (status) query = query.eq('status', status);
     if (category) query = query.eq('category', category);
+    if (archived === 'true') query = query.eq('archived', true);
+    else if (archived === 'false') query = query.eq('archived', false);
 
     const { data: requests, error } = await query;
     if (error) return res.status(400).json({ error });
@@ -1888,7 +1890,7 @@ app.get('/api/reports/summary', authenticate, async (req, res) => {
 
 app.get('/api/reports/requests', authenticate, async (req, res) => {
   try {
-    const { dept, from, to, status, category, fiscal_year } = req.query;
+    const { dept, from, to, status, category, fiscal_year, archived = 'false' } = req.query;
     let query = supabase.from('expense_requests').select(REQUESTS_REPORT_SELECT);
 
     if (req.user.role === 'employee') {
@@ -1906,6 +1908,8 @@ app.get('/api/reports/requests', authenticate, async (req, res) => {
     if (to) query = query.lte('submitted_at', to);
     if (status) query = query.eq('status', status);
     if (category) query = query.eq('category', category);
+    if (archived === 'true') query = query.eq('archived', true);
+    else if (archived === 'false') query = query.eq('archived', false);
 
     const { data, error } = await query.order('submitted_at', { ascending: false });
     if (error) return res.status(400).json({ error });

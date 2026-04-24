@@ -264,14 +264,6 @@ const Approvals = () => {
     [departments]
   );
 
-  const departmentOptionsWithFiscalYear = departmentOptions.map((option) => {
-    const department = departments.find((entry) => entry.id === option.id);
-    return {
-      ...option,
-      label: `${department?.name || 'Department'} • FY ${department?.fiscal_year || 'N/A'} • ${String(option.label || '').split(' • ').slice(1).join(' • ')}`
-    };
-  });
-
   if (!user) return <div className="text-white">Loading...</div>;
 
   return (

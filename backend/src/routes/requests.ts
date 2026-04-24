@@ -898,4 +898,53 @@ router.get('/:id/timeline', authenticate, async (req: any, res) => {
   );
 });
 
+// PATCH /api/requests/:id/archive
+router.patch('/:id/archive', authenticate, authorize('accounting', 'admin'), async (req: any, res) => {
+  const { id } = req.params;
+  const { archived } = req.body;
+
+  if (typeof archived !== 'boolean') {
+    return res.status(400).json({ error: 'Archived must be a boolean value.' });
+  }
+
+  const { data: request, error: fetchError } = await supabase
+    .from('expense_requests')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (fetchError) return res.status(400).json({ error: fetchError });
+  if (!request) return res.status(404).json({ error: 'Request not found.' });
+
+  // Allow archiving released or rejected requests
+  if (!['released', 'rejected'].includes(request.status)) {
+    return res.status(400).json({ error: 'Only released or rejected requests can be archived.' });
+  }
+
+  const { data, error } = await supabase
+    .from('expense_requests')
+    .update({
+      archived,
+      updated_at: new Date()
+    })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) return res.status(400).json({ error });
+
+  await insertAuditLogs(id, req.user.id, [
+    {
+      entity_type: 'request',
+      action: archived ? 'archived' : 'unarchived',
+      field_name: 'archived',
+      old_value: request.archived ? 'true' : 'false',
+      new_value: archived ? 'true' : 'false',
+      note: `Request ${archived ? 'archived' : 'unarchived'} by accounting`
+    }
+  ]);
+
+  res.json(data);
+});
+
 export default router;

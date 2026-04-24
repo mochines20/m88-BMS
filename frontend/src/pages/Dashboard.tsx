@@ -77,9 +77,43 @@ const getRoleFocus = (role?: string) => {
   }
 };
 
+const condenseLogs = (logs: any[]) => {
+  return logs.reduce((acc: any[], log: any) => {
+    const previous = acc[acc.length - 1];
+    const sameGroup = previous &&
+      previous.action === log.action &&
+      previous.stage === log.stage &&
+      previous.actor_name === log.actor_name &&
+      previous.actor_role === log.actor_role &&
+      previous.note === log.note;
+
+    if (sameGroup) {
+      previous.count += 1;
+      previous.latestTimestamp = log.timestamp;
+      return acc;
+    }
+
+    acc.push({ ...log, count: 1, latestTimestamp: log.timestamp });
+    return acc;
+  }, []);
+};
+
 const Dashboard = () => {
   const [user, setUser] = useState<any>(null);
   const [requests, setRequests] = useState<any[]>([]);
+  const [timeline, setTimeline] = useState<any[]>([]);
+
+  const fetchTimeline = async (id: string) => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    try {
+      const res = await api.get(`/api/requests/${id}/timeline`, { headers: { Authorization: `Bearer ${token}` } });
+      setTimeline(res.data);
+    } catch {
+      setTimeline([]);
+    }
+  };
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -93,6 +127,10 @@ const Dashboard = () => {
         ]);
         setUser(userResponse.data);
         setRequests(requestsResponse.data);
+
+        if (requestsResponse.data.length > 0) {
+          await fetchTimeline(requestsResponse.data[0].id);
+        }
       } catch {
         localStorage.removeItem('token');
       }
@@ -125,6 +163,8 @@ const Dashboard = () => {
     () => [...requests].sort((a: any, b: any) => new Date(b.submitted_at || b.updated_at).getTime() - new Date(a.submitted_at || a.updated_at).getTime()).slice(0, 6),
     [requests]
   );
+
+  const condensedTimeline = useMemo(() => condenseLogs(timeline), [timeline]);
 
   if (!user) return <div className="text-white">Loading...</div>;
 
@@ -182,9 +222,9 @@ const Dashboard = () => {
             {recentRequests.map((request: any) => (
               <div key={request.id} className="rounded-[24px] border border-[#8FB3E2]/10 bg-[#192338]/34 p-4">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <h3 className="text-lg font-semibold text-white">{request.item_name}</h3>
-                    <p className="mt-1 text-sm text-[#D9E1F1]/72">
+                  <div className="min-w-0">
+                    <h3 className="break-words text-lg font-semibold text-white">{request.item_name}</h3>
+                    <p className="mt-1 break-words text-sm text-[#D9E1F1]/72">
                       {request.request_code} • {request.category} • {formatMoney(toNumber(request.amount))}
                     </p>
                     <p className="mt-2 text-sm text-[#D9E1F1]/84">{getStatusLabel(request.status)}</p>
@@ -241,6 +281,36 @@ const Dashboard = () => {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className="panel">
+          <h2 className="text-2xl font-bold text-white">Recent Timeline</h2>
+          <p className="mt-2 text-sm text-[#D9E1F1]/72">Showing condensed history from the latest request.</p>
+          <div className="mt-5 space-y-3">
+            {condensedTimeline.length === 0 ? (
+              <div className="panel-muted">
+                <p className="text-[#D9E1F1]/72">No timeline activity available yet.</p>
+              </div>
+            ) : (
+              condensedTimeline.slice(0, 4).map((log: any) => (
+                <div key={log.id} className="panel-muted">
+                  <p className="font-semibold capitalize text-white">{log.action} • {log.stage}</p>
+                  <p className="mt-1 text-sm text-[#D9E1F1]/80">
+                    {log.note || 'No note provided.'}
+                    {log.count > 1 ? ` (${log.count} similar entries)` : ''}
+                  </p>
+                  <p className="mt-2 text-xs text-[#D9E1F1]/56">
+                    {log.actor_name || 'System'} {log.actor_role ? `• ${log.actor_role}` : ''} • {new Date(log.latestTimestamp).toLocaleString()}
+                  </p>
+                </div>
+              ))
+            )}
+            {condensedTimeline.length > 4 && (
+              <div className="panel-muted text-sm text-[#D9E1F1]/70">
+                Showing latest 4 timeline entries of {condensedTimeline.length}. Open Request Tracker for full history.
+              </div>
+            )}
           </div>
         </div>
 
