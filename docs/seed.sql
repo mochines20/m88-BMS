@@ -67,13 +67,14 @@ WITH user_rows AS (
     ('John Employee', 'john.employee@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'employee', 'IT Department'),
     ('Jane Supervisor', 'jane.supervisor@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'supervisor', 'IT Department'),
     ('Bob Accounting', 'bob.accounting@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'accounting', 'Finance Department'),
-    ('Alice Admin', 'alice.admin@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'admin', 'Admin Department')
+    ('Alice Admin', 'alice.admin@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'admin', 'Admin Department'),
+    ('Sarah Super Admin', 'sarah.superadmin@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'super_admin', NULL)
   ) AS v(name, email, password_hash, role, department_name)
 )
 INSERT INTO users (name, email, password_hash, role, department_id)
 SELECT u.name, u.email, u.password_hash, u.role, d.id
 FROM user_rows u
-JOIN departments d ON d.name = u.department_name
+LEFT JOIN departments d ON d.name = u.department_name
 WHERE NOT EXISTS (
   SELECT 1 FROM users x WHERE x.email = u.email
 );
@@ -84,7 +85,8 @@ WITH user_rows AS (
     ('John Employee', 'john.employee@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'employee'),
     ('Jane Supervisor', 'jane.supervisor@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'supervisor'),
     ('Bob Accounting', 'bob.accounting@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'accounting'),
-    ('Alice Admin', 'alice.admin@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'admin')
+    ('Alice Admin', 'alice.admin@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'admin'),
+    ('Sarah Super Admin', 'sarah.superadmin@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'super_admin')
   ) AS v(name, email, password_hash, role)
 )
 UPDATE users
@@ -132,3 +134,9 @@ FROM departments d
 WHERE users.email = 'alice.admin@madison88.com'
   AND d.name = 'Admin Department'
   AND users.department_id IS DISTINCT FROM d.id;
+
+UPDATE users
+SET department_id = NULL,
+    updated_at = NOW()
+WHERE users.email = 'sarah.superadmin@madison88.com'
+  AND users.department_id IS NOT NULL;

@@ -1075,6 +1075,105 @@ app.get('/api/auth/me', authenticate, async (req, res) => {
   }
 });
 
+app.get('/api/auth/users', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const [{ data: users, error: usersError }, { data: departments, error: departmentsError }] = await Promise.all([
+      supabase.from('users').select('id, name, email, role, department_id, created_at, updated_at').order('updated_at', { ascending: false }),
+      supabase.from('departments').select('id, name, fiscal_year').order('name', { ascending: true })
+    ]);
+
+    if (usersError) return res.status(400).json({ error: usersError });
+    if (departmentsError) return res.status(400).json({ error: departmentsError });
+
+    const departmentMap = new Map((departments || []).map((department) => [department.id, department]));
+    res.json((users || []).map((user) => ({
+      ...user,
+      department_name: departmentMap.get(user.department_id)?.name || '',
+      fiscal_year: departmentMap.get(user.department_id)?.fiscal_year || null
+    })));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/auth/users/:id', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const normalizedName = String(req.body?.name || '').trim();
+    const normalizedRole = String(req.body?.role || '').trim();
+    const normalizedDepartmentId = String(req.body?.department_id || '').trim();
+
+    if (!normalizedName || !normalizedRole) {
+      return res.status(400).json({ error: 'Name and role are required.' });
+    }
+
+    if (!['employee', 'supervisor', 'accounting', 'admin', 'super_admin'].includes(normalizedRole)) {
+      return res.status(400).json({ error: 'Invalid role.' });
+    }
+
+    const payload = {
+      name: normalizedName,
+      role: normalizedRole,
+      department_id: normalizedRole === 'super_admin' ? null : (normalizedDepartmentId || null),
+      updated_at: new Date().toISOString()
+    };
+
+    if (normalizedRole !== 'super_admin' && !payload.department_id) {
+      return res.status(400).json({ error: 'Department is required for this role.' });
+    }
+
+    const { data, error } = await supabase
+      .from('users')
+      .update(payload)
+      .eq('id', req.params.id)
+      .select('id, name, email, role, department_id, updated_at')
+      .single();
+
+    if (error) return res.status(400).json({ error: error.message || error });
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/auth/users/:id', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({ error: 'You cannot delete your own super admin account.' });
+    }
+
+    const { data: targetUser, error: fetchError } = await supabase
+      .from('users')
+      .select('id, role')
+      .eq('id', req.params.id)
+      .maybeSingle();
+
+    if (fetchError) return res.status(400).json({ error: fetchError.message || fetchError });
+    if (!targetUser) return res.status(404).json({ error: 'User not found.' });
+
+    const { error } = await supabase
+      .from('users')
+      .delete()
+      .eq('id', req.params.id);
+
+    if (error) return res.status(400).json({ error: error.message || error });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Requests routes
 app.get('/api/requests', authenticate, async (req, res) => {
   try {
@@ -1526,6 +1625,41 @@ app.post('/api/petty-cash/replenish', authenticate, authorize(['accounting', 'ad
 });
 
 // Approvals routes
+app.patch('/api/requests/:id/priority', authenticate, authorize(['supervisor', 'admin']), async (req, res) => {
+  try {
+    const normalizedPriority = String(req.body?.priority || '').trim().toLowerCase();
+    if (!['low', 'normal', 'urgent'].includes(normalizedPriority)) {
+      return res.status(400).json({ error: 'Priority must be low, normal, or urgent.' });
+    }
+
+    const result = await getRequestForUser(req.params.id, req.user);
+    if (result.error) {
+      return res.status(result.status).json({ error: result.error.message || result.error });
+    }
+
+    const request = result.request;
+    if (req.user.role === 'supervisor' && request.status !== 'pending_supervisor') {
+      return res.status(400).json({ error: 'Urgency can only be updated while waiting for supervisor approval.' });
+    }
+
+    const { data, error } = await supabase
+      .from('expense_requests')
+      .update({
+        priority: normalizedPriority,
+        updated_at: new Date()
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error) return res.status(400).json({ error: error.message || error });
+
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.patch('/api/requests/:id/approve', authenticate, authorize(['supervisor', 'accounting']), async (req, res) => {
   try {
     const result = await getRequestForUser(req.params.id, req.user);
@@ -1722,6 +1856,147 @@ app.patch('/api/requests/:id/reject', authenticate, authorize(['supervisor', 'ac
     });
 
     res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/requests/:id/return', authenticate, authorize(['supervisor', 'accounting', 'admin']), async (req, res) => {
+  try {
+    const reason = String(req.body?.reason || '').trim();
+    if (!reason) {
+      return res.status(400).json({ error: 'A return reason is required.' });
+    }
+
+    const result = await getRequestForUser(req.params.id, req.user);
+    if (result.error) {
+      return res.status(result.status).json({ error: result.error.message || result.error });
+    }
+
+    const request = result.request;
+    if (!['pending_supervisor', 'pending_accounting'].includes(request.status)) {
+      return res.status(400).json({ error: 'Only pending requests can be returned for revision.' });
+    }
+
+    const stage = req.user.role === 'supervisor' ? 'supervisor' : 'accounting';
+    const { data, error } = await supabase
+      .from('expense_requests')
+      .update({
+        status: 'returned_for_revision',
+        returned_by: req.user.id,
+        returned_at: new Date(),
+        return_reason: reason,
+        updated_at: new Date()
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error) return res.status(400).json({ error: error.message || error });
+
+    await supabase.from('approval_logs').insert({
+      request_id: request.id,
+      actor_id: req.user.id,
+      action: 'returned',
+      stage,
+      note: reason
+    });
+
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/requests/:id/resubmit', authenticate, authorize(['employee']), async (req, res) => {
+  try {
+    const purpose = String(req.body?.purpose || '').trim();
+    const result = await getRequestForUser(req.params.id, req.user);
+    if (result.error) {
+      return res.status(result.status).json({ error: result.error.message || result.error });
+    }
+
+    const request = result.request;
+    if (request.employee_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (request.status !== 'returned_for_revision') {
+      return res.status(400).json({ error: 'Only returned requests can be resubmitted.' });
+    }
+
+    const { data, error } = await supabase
+      .from('expense_requests')
+      .update({
+        status: 'pending_supervisor',
+        purpose: purpose || request.purpose,
+        submitted_at: new Date(),
+        returned_by: null,
+        returned_at: null,
+        return_reason: null,
+        revision_count: Number(request.revision_count || 0) + 1,
+        updated_at: new Date()
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error) return res.status(400).json({ error: error.message || error });
+
+    await supabase.from('approval_logs').insert({
+      request_id: request.id,
+      actor_id: req.user.id,
+      action: 'submitted',
+      stage: 'supervisor',
+      note: 'Request resubmitted after revision'
+    });
+
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/requests/audit-logs', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const [approvalLogsResult, allocationLogsResult] = await Promise.all([
+      supabase.from('approval_logs').select('*').order('timestamp', { ascending: false }).limit(150),
+      supabase.from('allocation_logs').select('*').order('created_at', { ascending: false }).limit(150)
+    ]);
+
+    if (approvalLogsResult.error) return res.status(400).json({ error: approvalLogsResult.error });
+    if (allocationLogsResult.error) return res.status(400).json({ error: allocationLogsResult.error });
+
+    const approvalLogs = (approvalLogsResult.data || []).map((log) => ({ ...log, log_type: 'approval', event_time: log.timestamp }));
+    const allocationLogs = (allocationLogsResult.data || []).map((log) => ({ ...log, log_type: 'allocation', event_time: log.created_at }));
+    const combinedLogs = [...approvalLogs, ...allocationLogs]
+      .sort((left, right) => new Date(right.event_time).getTime() - new Date(left.event_time).getTime())
+      .slice(0, 200);
+
+    const actorIds = Array.from(new Set(combinedLogs.map((log) => log.actor_id).filter(Boolean)));
+    const requestIds = Array.from(new Set(combinedLogs.map((log) => log.request_id).filter(Boolean)));
+
+    const { data: actors } = actorIds.length
+      ? await supabase.from('users').select('id, name, role').in('id', actorIds)
+      : { data: [] };
+    const { data: requests } = requestIds.length
+      ? await supabase.from('expense_requests').select('id, request_code, item_name, status').in('id', requestIds)
+      : { data: [] };
+
+    const actorMap = new Map((actors || []).map((actor) => [actor.id, actor]));
+    const requestMap = new Map((requests || []).map((request) => [request.id, request]));
+
+    res.json(combinedLogs.map((log) => ({
+      ...log,
+      actor_name: actorMap.get(log.actor_id)?.name || 'System',
+      actor_role: actorMap.get(log.actor_id)?.role || '',
+      request_code: requestMap.get(log.request_id)?.request_code || '',
+      item_name: requestMap.get(log.request_id)?.item_name || '',
+      request_status: requestMap.get(log.request_id)?.status || ''
+    })));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

@@ -8,6 +8,11 @@ interface LayoutProps {
   children: ReactNode;
 }
 
+const normalizeDisplayName = (name: string) => {
+  const trimmedName = String(name || '').trim();
+  return trimmedName.toLowerCase() === 'byahero' ? 'Byahero' : trimmedName;
+};
+
 const Layout = ({ children }: LayoutProps) => {
   const [user, setUser] = useState<any>(null);
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0);
@@ -83,7 +88,7 @@ const Layout = ({ children }: LayoutProps) => {
               alt="Madison88"
               className="h-12 w-auto rounded-xl border border-[#D9E1F1]/40 bg-[#f8fbff] px-3 py-2 shadow-[0_8px_24px_rgba(5,10,20,0.18)]"
             />
-            <p className="text-sm text-slate-300">Welcome, {user.name}</p>
+            <p className="text-sm text-slate-300">Welcome, {normalizeDisplayName(user.name)}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex flex-wrap gap-2">
@@ -93,9 +98,6 @@ const Layout = ({ children }: LayoutProps) => {
                   <Link to="/request" className={getNavClassName('/request')}>New Request</Link>
                   <Link to="/tracker" className={getNavClassName('/tracker')}>My Requests</Link>
                 </>
-              )}
-              {(user.role === 'employee' || user.role === 'supervisor') && (
-                <Link to="/profile" className={getNavClassName('/profile')}>My Profile</Link>
               )}
               {(user.role === 'supervisor' || user.role === 'accounting') && (
                 <Link to="/approvals" className={`${getNavClassName('/approvals')} relative`}>
@@ -107,13 +109,16 @@ const Layout = ({ children }: LayoutProps) => {
                   )}
                 </Link>
               )}
-              {user.role !== 'employee' && (
+              {user.role !== 'employee' && user.role !== 'super_admin' && (
                 <Link to="/reports" className={getNavClassName('/reports')}>Reports</Link>
               )}
-              {(user.role === 'admin' || user.role === 'accounting') && (
+              {(user.role === 'admin' || user.role === 'accounting' || user.role === 'super_admin') && (
                 <Link to="/admin" className={getNavClassName('/admin')}>
-                  {user.role === 'accounting' ? 'Budget Management' : 'Admin'}
+                  {user.role === 'accounting' ? 'Budget Management' : user.role === 'super_admin' ? 'Super Admin' : 'Admin'}
                 </Link>
+              )}
+              {(user.role === 'employee' || user.role === 'supervisor') && (
+                <Link to="/profile" className={getNavClassName('/profile')}>My Profile</Link>
               )}
             </div>
             <button onClick={handleLogout} className="btn-danger !rounded-full !px-4 !py-2 !text-sm">Logout</button>

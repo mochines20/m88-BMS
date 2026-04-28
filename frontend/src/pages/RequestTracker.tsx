@@ -239,12 +239,6 @@ const RequestTracker = () => {
                 <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/60">Fiscal Year</p>
                 <p className="mt-2 text-lg font-semibold text-white">{selectedRequest.fiscal_year || selectedRequest.departments?.fiscal_year || 'N/A'}</p>
               </div>
-              {selectedRequest.budget_summary && (
-                <div className="panel-muted">
-                  <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/60">Projected Remaining</p>
-                  <p className="mt-2 text-lg font-semibold text-white">{formatMoney(toNumber(selectedRequest.budget_summary.projected_remaining_budget))}</p>
-                </div>
-              )}
             </div>
 
             {selectedRequest.allocations?.length > 0 && (
@@ -253,9 +247,6 @@ const RequestTracker = () => {
                   <div key={`${selectedRequest.id}-${allocation.department_id}`} className="panel-muted">
                     <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/60">{allocation.department_name}</p>
                     <p className="mt-2 text-lg font-semibold text-white">{formatMoney(toNumber(allocation.amount))}</p>
-                    <p className="mt-1 text-sm text-[#D9E1F1]/72">
-                      Projected remaining {formatMoney(toNumber(allocation.projected_remaining_budget))}
-                    </p>
                   </div>
                 ))}
               </div>

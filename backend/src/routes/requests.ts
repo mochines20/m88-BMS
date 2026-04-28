@@ -469,6 +469,59 @@ router.patch('/:id/allocations', authenticate, authorize('accounting', 'admin'),
   res.json(savedAllocations || []);
 });
 
+// PATCH /api/requests/:id/priority
+router.patch('/:id/priority', authenticate, authorize('supervisor', 'admin'), async (req: any, res) => {
+  const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
+  const { id } = req.params;
+  const normalizedPriority = toText(req.body?.priority).toLowerCase();
+
+  if (!['low', 'normal', 'urgent'].includes(normalizedPriority)) {
+    return res.status(400).json({ error: 'Priority must be low, normal, or urgent.' });
+  }
+
+  const { data: request, error: fetchError } = await supabase
+    .from('expense_requests')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (fetchError || !request) return res.status(404).json({ error: fetchError?.message || 'Request not found.' });
+
+  if (req.user.role === 'supervisor') {
+    const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
+    if (!accessibleDepartmentIds.includes(request.department_id)) return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  if (request.status !== 'pending_supervisor') {
+    return res.status(400).json({ error: 'Urgency can only be updated while waiting for supervisor approval.' });
+  }
+
+  const { data, error } = await supabase
+    .from('expense_requests')
+    .update({
+      priority: normalizedPriority,
+      updated_at: new Date()
+    })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) return res.status(400).json({ error });
+
+  await insertAuditLogs(id, req.user.id, [
+    {
+      entity_type: 'request',
+      action: 'priority_updated',
+      field_name: 'priority',
+      old_value: toText(request.priority),
+      new_value: normalizedPriority,
+      note: 'Urgency updated during supervisor review'
+    }
+  ]);
+
+  res.json(data);
+});
+
 // PATCH /api/requests/:id/approve
 router.patch('/:id/approve', authenticate, authorize('supervisor', 'accounting'), async (req: any, res) => {
   const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
@@ -548,6 +601,7 @@ router.patch('/:id/release', authenticate, authorize('accounting', 'admin'), asy
 
 // PATCH /api/requests/:id/return
 router.patch('/:id/return', authenticate, authorize('supervisor', 'accounting', 'admin'), async (req: any, res) => {
+  const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
   const { id } = req.params;
   const reason = toText(req.body?.reason);
   const { data: request, error: fetchError } = await supabase
@@ -557,7 +611,10 @@ router.patch('/:id/return', authenticate, authorize('supervisor', 'accounting', 
     .single();
 
   if (fetchError || !request) return res.status(400).json({ error: fetchError || 'Request not found.' });
-  if (req.user.role === 'supervisor' && request.department_id !== req.user.department_id) return res.status(403).json({ error: 'Forbidden' });
+  if (req.user.role === 'supervisor') {
+    const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
+    if (!accessibleDepartmentIds.includes(request.department_id)) return res.status(403).json({ error: 'Forbidden' });
+  }
   if (!['pending_supervisor', 'pending_accounting'].includes(request.status)) {
     return res.status(400).json({ error: 'Only pending requests can be returned for revision.' });
   }
@@ -694,7 +751,7 @@ router.patch('/:id/reject', authenticate, authorize('supervisor', 'accounting'),
   const stage = req.user.role === 'supervisor' ? 'supervisor' : 'accounting';
   const { data, error } = await supabase
     .from('expense_requests')
-    .update({ status: 'rejected', rejection_reason: reason, rejection_stage: stage, updated_at: new Date() })
+    .update({ status: 'rejected', rejection_reason: reason, rejection_stage: stage, archived: true, updated_at: new Date() })
     .eq('id', id)
     .select()
     .single();
@@ -716,6 +773,14 @@ router.patch('/:id/reject', authenticate, authorize('supervisor', 'accounting'),
       old_value: request.status,
       new_value: 'rejected',
       note: reason
+    },
+    {
+      entity_type: 'request',
+      action: 'archived',
+      field_name: 'archived',
+      old_value: request.archived ? 'true' : 'false',
+      new_value: 'true',
+      note: 'Automatically archived after rejection'
     }
   ]);
 
@@ -849,6 +914,65 @@ router.patch('/:id/liquidation/review', authenticate, authorize('accounting', 'a
 });
 
 // GET /api/requests/:id/timeline
+router.get('/audit-logs', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const [approvalLogsResult, allocationLogsResult, auditLogsResult] = await Promise.all([
+    supabase.from('approval_logs').select('*').order('timestamp', { ascending: false }).limit(150),
+    supabase.from('allocation_logs').select('*').order('created_at', { ascending: false }).limit(150),
+    supabase.from('request_audit_logs').select('*').order('created_at', { ascending: false }).limit(150)
+  ]);
+
+  if (approvalLogsResult.error) return res.status(400).json({ error: approvalLogsResult.error });
+  if (allocationLogsResult.error) return res.status(400).json({ error: allocationLogsResult.error });
+  if (auditLogsResult.error) return res.status(400).json({ error: auditLogsResult.error });
+
+  const approvalLogs = (approvalLogsResult.data || []).map((log: any) => ({
+    ...log,
+    log_type: 'approval',
+    event_time: log.timestamp
+  }));
+  const allocationLogs = (allocationLogsResult.data || []).map((log: any) => ({
+    ...log,
+    log_type: 'allocation',
+    event_time: log.created_at
+  }));
+  const auditLogs = (auditLogsResult.data || []).map((log: any) => ({
+    ...log,
+    log_type: 'audit',
+    event_time: log.created_at
+  }));
+
+  const combinedLogs = [...approvalLogs, ...allocationLogs, ...auditLogs]
+    .sort((left: any, right: any) => new Date(right.event_time).getTime() - new Date(left.event_time).getTime())
+    .slice(0, 200);
+
+  const actorIds = Array.from(new Set(combinedLogs.map((log: any) => log.actor_id).filter(Boolean)));
+  const requestIds = Array.from(new Set(combinedLogs.map((log: any) => log.request_id).filter(Boolean)));
+
+  const [{ data: actors }, { data: requests }] = await Promise.all([
+    actorIds.length ? supabase.from('users').select('id, name, role').in('id', actorIds) : { data: [] as any[] },
+    requestIds.length ? supabase.from('expense_requests').select('id, request_code, item_name, status').in('id', requestIds) : { data: [] as any[] }
+  ]);
+
+  const actorMap = new Map((actors || []).map((actor: any) => [actor.id, actor]));
+  const requestMap = new Map((requests || []).map((request: any) => [request.id, request]));
+
+  res.json(
+    combinedLogs.map((log: any) => ({
+      ...log,
+      actor_name: actorMap.get(log.actor_id)?.name || 'System',
+      actor_role: actorMap.get(log.actor_id)?.role || '',
+      request_code: requestMap.get(log.request_id)?.request_code || '',
+      item_name: requestMap.get(log.request_id)?.item_name || '',
+      request_status: requestMap.get(log.request_id)?.status || ''
+    }))
+  );
+});
+
+// GET /api/requests/:id/timeline
 router.get('/:id/timeline', authenticate, async (req: any, res) => {
   const [approvalLogsResult, allocationLogsResult, auditLogsResult] = await Promise.all([
     supabase.from('approval_logs').select('*').eq('request_id', req.params.id),
@@ -899,7 +1023,7 @@ router.get('/:id/timeline', authenticate, async (req: any, res) => {
 });
 
 // PATCH /api/requests/:id/archive
-router.patch('/:id/archive', authenticate, authorize('accounting', 'admin'), async (req: any, res) => {
+router.patch('/:id/archive', authenticate, authorize('supervisor', 'accounting', 'admin'), async (req: any, res) => {
   const { id } = req.params;
   const { archived } = req.body;
 
@@ -915,6 +1039,14 @@ router.patch('/:id/archive', authenticate, authorize('accounting', 'admin'), asy
 
   if (fetchError) return res.status(400).json({ error: fetchError });
   if (!request) return res.status(404).json({ error: 'Request not found.' });
+
+  if (req.user.role === 'supervisor') {
+    const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
+    const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
+    if (!accessibleDepartmentIds.includes(request.department_id)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+  }
 
   // Allow archiving released or rejected requests
   if (!['released', 'rejected'].includes(request.status)) {
@@ -940,7 +1072,7 @@ router.patch('/:id/archive', authenticate, authorize('accounting', 'admin'), asy
       field_name: 'archived',
       old_value: request.archived ? 'true' : 'false',
       new_value: archived ? 'true' : 'false',
-      note: `Request ${archived ? 'archived' : 'unarchived'} by accounting`
+      note: `Request ${archived ? 'archived' : 'unarchived'} by ${req.user.role}`
     }
   ]);
 

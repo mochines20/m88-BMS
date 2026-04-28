@@ -8,6 +8,11 @@ interface DepartmentOption {
   fiscal_year?: number;
 }
 
+const normalizeDisplayName = (name: string) => {
+  const trimmedName = String(name || '').trim();
+  return trimmedName.toLowerCase() === 'byahero' ? 'Byahero' : trimmedName;
+};
+
 const Profile = () => {
   const [user, setUser] = useState<any>(null);
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
@@ -28,7 +33,7 @@ const Profile = () => {
         ]);
 
         setUser(meResponse.data);
-        setName(meResponse.data.name || '');
+        setName(normalizeDisplayName(meResponse.data.name || ''));
         setDepartmentId(meResponse.data.department_id || '');
         setDepartments(departmentsResponse.data || []);
       } catch (err: any) {
@@ -66,7 +71,7 @@ const Profile = () => {
 
       localStorage.setItem('token', response.data.token);
       setUser(response.data.user);
-      setName(response.data.user.name || trimmedName);
+      setName(normalizeDisplayName(response.data.user.name || trimmedName));
       setDepartmentId(response.data.user.department_id || departmentId);
       toast.success('Profile updated!');
     } catch (err: any) {

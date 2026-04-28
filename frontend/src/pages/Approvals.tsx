@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
+import Modal from '../components/Modal';
 
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('en-PH', {
@@ -42,10 +43,12 @@ const Approvals = () => {
   const [user, setUser] = useState<any>(null);
   const [departments, setDepartments] = useState<any[]>([]);
   const [allocationDrafts, setAllocationDrafts] = useState<Record<string, Array<{ department_id: string; amount: string }>>>({});
+  const [priorityDrafts, setPriorityDrafts] = useState<Record<string, string>>({});
   const [releaseDrafts, setReleaseDrafts] = useState<Record<string, { release_method: string; release_reference_no: string; release_note: string; liquidation_due_at: string }>>({});
   const [expandedRequests, setExpandedRequests] = useState<Record<string, boolean>>({});
   const [expandedSplits, setExpandedSplits] = useState<Record<string, boolean>>({});
   const [savingRequestId, setSavingRequestId] = useState('');
+  const [returnModalRequestId, setReturnModalRequestId] = useState('');
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -97,6 +100,15 @@ const Approvals = () => {
               department_id: allocation.department_id,
               amount: String(toNumber(allocation.amount))
             }));
+          }
+        });
+        return next;
+      });
+      setPriorityDrafts((current) => {
+        const next = { ...current };
+        pending.forEach((request: any) => {
+          if (!next[request.id]) {
+            next[request.id] = request.priority || 'normal';
           }
         });
         return next;
@@ -156,14 +168,18 @@ const Approvals = () => {
     }
   };
 
-  const handleReturn = async (requestId: string) => {
+  const handleReturn = async (requestId: string, reason: string) => {
     const token = localStorage.getItem('token');
-    const reason = prompt('Return reason:');
-    if (!reason) return;
+    const normalizedReason = String(reason || '').trim();
+    if (!normalizedReason) {
+      toast.error('Return reason is required');
+      return;
+    }
 
     try {
-      await api.patch(`/api/requests/${requestId}/return`, { reason }, { headers: { Authorization: `Bearer ${token}` } });
+      await api.patch(`/api/requests/${requestId}/return`, { reason: normalizedReason }, { headers: { Authorization: `Bearer ${token}` } });
       toast.success('Request returned for revision!');
+      setReturnModalRequestId('');
       fetchRequests();
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Return failed');
@@ -219,6 +235,28 @@ const Approvals = () => {
       const isOpening = !current[requestId];
       return isOpening ? { [requestId]: true } : {};
     });
+  };
+
+  const savePriority = async (requestId: string) => {
+    const token = localStorage.getItem('token');
+    const priority = priorityDrafts[requestId] || 'normal';
+
+    try {
+      const res = await api.patch(
+        `/api/requests/${requestId}/priority`,
+        { priority },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      setPriorityDrafts((current) => ({
+        ...current,
+        [requestId]: res.data?.priority || priority
+      }));
+      toast.success('Urgency updated.');
+      await fetchRequests();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to update urgency');
+    }
   };
 
   const saveAllocations = async (requestId: string, silent = false) => {
@@ -326,6 +364,34 @@ const Approvals = () => {
                         Requesting Department: <span className="font-semibold text-white">{req.department_name || 'Unknown department'}</span>
                       </p>
                     </div>
+
+                    {user.role === 'supervisor' && (
+                      <div className="mb-5 rounded-[24px] border border-[#8FB3E2]/10 bg-black/10 p-4">
+                        <h3 className="text-lg font-semibold text-white">Urgency Control</h3>
+                        <p className="mt-1 text-sm text-[#D9E1F1]/68">Supervisors can raise or lower the urgency before approval.</p>
+                        <div className="mt-4 flex flex-wrap items-center gap-3">
+                          <select
+                            className="field-input max-w-[220px]"
+                            value={priorityDrafts[req.id] || req.priority || 'normal'}
+                            onChange={(event) => setPriorityDrafts((current) => ({
+                              ...current,
+                              [req.id]: event.target.value
+                            }))}
+                          >
+                            <option value="low">Low</option>
+                            <option value="normal">Normal</option>
+                            <option value="urgent">Urgent</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => void savePriority(req.id)}
+                            className="btn-secondary"
+                          >
+                            Update Urgency
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {user.role === 'accounting' && (
                       <div className="mb-5 rounded-[24px] border border-[#8FB3E2]/10 bg-black/10 p-4">
@@ -505,7 +571,7 @@ const Approvals = () => {
                       >
                         Reject
                       </button>
-                      <button onClick={() => void handleReturn(req.id)} className="btn-secondary">
+                      <button onClick={() => setReturnModalRequestId(req.id)} className="btn-secondary">
                         Return for Revision
                       </button>
                     </div>
@@ -516,6 +582,22 @@ const Approvals = () => {
           })}
         </div>
       )}
+
+      <Modal
+        isOpen={Boolean(returnModalRequestId)}
+        onClose={() => setReturnModalRequestId('')}
+        onConfirm={(value) => {
+          if (returnModalRequestId) {
+            void handleReturn(returnModalRequestId, value);
+          }
+        }}
+        title="Return for Revision"
+        message="Explain what needs to be corrected before this request can move forward."
+        placeholder="Enter the revision details or reason for return..."
+        confirmLabel="Send Back"
+        cancelLabel="Cancel"
+        type="prompt"
+      />
     </div>
   );
 };

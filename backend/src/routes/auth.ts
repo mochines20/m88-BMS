@@ -556,6 +556,108 @@ router.post('/signup', async (req, res) => {
   });
 });
 
+// GET /api/auth/users
+router.get('/users', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const [{ data: users, error: usersError }, { data: departments, error: departmentsError }] = await Promise.all([
+    supabase
+      .from('users')
+      .select('id, name, email, role, department_id, created_at, updated_at')
+      .order('updated_at', { ascending: false }),
+    supabase
+      .from('departments')
+      .select('id, name, fiscal_year')
+      .order('name', { ascending: true })
+  ]);
+
+  if (usersError) return res.status(400).json({ error: usersError });
+  if (departmentsError) return res.status(400).json({ error: departmentsError });
+
+  const departmentMap = new Map((departments || []).map((department: any) => [department.id, department]));
+
+  res.json(
+    (users || []).map((user: any) => ({
+      ...user,
+      department_name: departmentMap.get(user.department_id)?.name || '',
+      fiscal_year: departmentMap.get(user.department_id)?.fiscal_year || null
+    }))
+  );
+});
+
+// PATCH /api/auth/users/:id
+router.patch('/users/:id', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const normalizedName = String(req.body?.name || '').trim();
+  const normalizedRole = String(req.body?.role || '').trim();
+  const normalizedDepartmentId = String(req.body?.department_id || '').trim();
+
+  if (!normalizedName || !normalizedRole) {
+    return res.status(400).json({ error: 'Name and role are required.' });
+  }
+
+  if (!['employee', 'supervisor', 'accounting', 'admin', 'super_admin'].includes(normalizedRole)) {
+    return res.status(400).json({ error: 'Invalid role.' });
+  }
+
+  const payload: any = {
+    name: normalizedName,
+    role: normalizedRole,
+    updated_at: new Date().toISOString()
+  };
+
+  if (normalizedDepartmentId) {
+    payload.department_id = normalizedDepartmentId;
+  } else if (normalizedRole !== 'super_admin') {
+    return res.status(400).json({ error: 'Department is required for this role.' });
+  } else {
+    payload.department_id = null;
+  }
+
+  const { data, error } = await supabase
+    .from('users')
+    .update(payload)
+    .eq('id', req.params.id)
+    .select('id, name, email, role, department_id, updated_at')
+    .single();
+
+  if (error) return res.status(400).json({ error: error.message || error });
+  res.json(data);
+});
+
+// DELETE /api/auth/users/:id
+router.delete('/users/:id', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  if (req.params.id === req.user.id) {
+    return res.status(400).json({ error: 'You cannot delete your own super admin account.' });
+  }
+
+  const { data: targetUser, error: fetchError } = await supabase
+    .from('users')
+    .select('id, role')
+    .eq('id', req.params.id)
+    .maybeSingle();
+
+  if (fetchError) return res.status(400).json({ error: fetchError.message || fetchError });
+  if (!targetUser) return res.status(404).json({ error: 'User not found.' });
+
+  const { error } = await supabase
+    .from('users')
+    .delete()
+    .eq('id', req.params.id);
+
+  if (error) return res.status(400).json({ error: error.message || error });
+  res.json({ success: true });
+});
+
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
   res.json({ message: 'Logged out' });

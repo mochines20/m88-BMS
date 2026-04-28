@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api';
+import toast from 'react-hot-toast';
 
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('en-PH', {
@@ -47,12 +48,18 @@ const getStatusTone = (status: string) => {
   }
 };
 
+const getRequesterName = (request: any) =>
+  request.requester_name || request.users?.name || request.user?.name || request.employee_name || request.requested_by || 'Unknown requester';
+
+const getRequesterDepartment = (request: any) =>
+  request.department_name || request.departments?.name || request.department?.name || 'Unknown department';
+
 const getRoleHeadline = (role?: string) => {
   switch (role) {
     case 'employee':
       return 'Track every request from submission to release.';
     case 'supervisor':
-      return 'Monitor departmental requests and approval progress.';
+      return 'Review finance-stage requests and keep release status visible.';
     case 'accounting':
       return 'Review finance-stage requests and keep release status visible.';
     case 'admin':
@@ -67,7 +74,7 @@ const getRoleFocus = (role?: string) => {
     case 'employee':
       return 'Your Request Flow';
     case 'supervisor':
-      return 'Department Approval Flow';
+      return 'Accounting Release Flow';
     case 'accounting':
       return 'Accounting Release Flow';
     case 'admin':
@@ -75,6 +82,11 @@ const getRoleFocus = (role?: string) => {
     default:
       return 'Request Flow';
   }
+};
+
+const normalizeDisplayName = (name: string) => {
+  const trimmedName = String(name || '').trim();
+  return trimmedName.toLowerCase() === 'byahero' ? 'Byahero' : trimmedName;
 };
 
 const condenseLogs = (logs: any[]) => {
@@ -102,6 +114,10 @@ const Dashboard = () => {
   const [user, setUser] = useState<any>(null);
   const [requests, setRequests] = useState<any[]>([]);
   const [timeline, setTimeline] = useState<any[]>([]);
+  const [flowPage, setFlowPage] = useState(1);
+  const [archiveView, setArchiveView] = useState<'active' | 'archived' | 'all'>('active');
+
+  const pageSize = 3;
 
   const fetchTimeline = async (id: string) => {
     const token = localStorage.getItem('token');
@@ -148,6 +164,15 @@ const Dashboard = () => {
     const released = requests.filter((r: any) => r.status === 'released' || r.status === 'approved').length;
     const rejected = requests.filter((r: any) => r.status === 'rejected').length;
     const totalAmount = requests.reduce((sum: number, request: any) => sum + toNumber(request.amount), 0);
+    const pendingAmount = requests
+      .filter((r: any) => ['pending_supervisor', 'pending_accounting', 'returned_for_revision'].includes(r.status))
+      .reduce((sum: number, request: any) => sum + toNumber(request.amount), 0);
+    const releasedAmount = requests
+      .filter((r: any) => r.status === 'released' || r.status === 'approved')
+      .reduce((sum: number, request: any) => sum + toNumber(request.amount), 0);
+    const rejectedAmount = requests
+      .filter((r: any) => r.status === 'rejected')
+      .reduce((sum: number, request: any) => sum + toNumber(request.amount), 0);
 
     return {
       total,
@@ -155,16 +180,56 @@ const Dashboard = () => {
       pendingAccounting,
       released,
       rejected,
-      totalAmount
+      totalAmount,
+      pendingAmount,
+      releasedAmount,
+      rejectedAmount
     };
   }, [requests]);
 
   const recentRequests = useMemo(
-    () => [...requests].sort((a: any, b: any) => new Date(b.submitted_at || b.updated_at).getTime() - new Date(a.submitted_at || a.updated_at).getTime()).slice(0, 6),
-    [requests]
+    () =>
+      [...requests]
+        .filter((request: any) => {
+          if (archiveView === 'all') return true;
+          if (archiveView === 'archived') return Boolean(request.archived);
+          return !request.archived;
+        })
+        .sort((a: any, b: any) => new Date(b.submitted_at || b.updated_at).getTime() - new Date(a.submitted_at || a.updated_at).getTime()),
+    [archiveView, requests]
   );
 
+  const totalFlowPages = Math.max(1, Math.ceil(recentRequests.length / pageSize));
+
+  const paginatedRequests = useMemo(() => {
+    const startIndex = (flowPage - 1) * pageSize;
+    return recentRequests.slice(startIndex, startIndex + pageSize);
+  }, [flowPage, recentRequests]);
+
+  useEffect(() => {
+    setFlowPage((currentPage) => Math.min(currentPage, totalFlowPages));
+  }, [totalFlowPages]);
+
   const condensedTimeline = useMemo(() => condenseLogs(timeline), [timeline]);
+
+  const toggleArchive = async (requestId: string, archived: boolean) => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    try {
+      await api.patch(
+        `/api/requests/${requestId}/archive`,
+        { archived },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setRequests((current) => current.map((request: any) => (
+        request.id === requestId ? { ...request, archived } : request
+      )));
+      toast.success(`Request ${archived ? 'archived' : 'unarchived'} successfully.`);
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Archive update failed');
+    }
+  };
 
   if (!user) return <div className="text-white">Loading...</div>;
 
@@ -173,7 +238,7 @@ const Dashboard = () => {
       <div className="page-header">
         <h1 className="page-title">Dashboard</h1>
         <p className="page-subtitle">
-          Welcome back, {user.name}. {getRoleHeadline(user.role)}
+          Welcome back, {normalizeDisplayName(user.name)}. {getRoleHeadline(user.role)}
         </p>
       </div>
 
@@ -207,19 +272,68 @@ const Dashboard = () => {
               <h2 className="text-2xl font-bold text-white">{getRoleFocus(user.role)}</h2>
               <p className="mt-2 text-sm text-[#D9E1F1]/72">Every request shows its current stage so status is always visible.</p>
             </div>
-            <div className="rounded-full border border-[#8FB3E2]/14 bg-[#31487A]/24 px-4 py-2 text-sm text-[#D9E1F1]/82">
-              Total Amount: <span className="font-semibold text-white">{formatMoney(stats.totalAmount)}</span>
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              {(user.role === 'supervisor' || user.role === 'accounting' || user.role === 'admin') && (
+                <div className="flex items-center overflow-hidden rounded-full border border-[#8FB3E2]/14 bg-[#31487A]/24 p-1">
+                  {[
+                    { key: 'active', label: 'Active' },
+                    { key: 'archived', label: 'Archived' },
+                    { key: 'all', label: 'All' }
+                  ].map((option) => (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => {
+                        setArchiveView(option.key as 'active' | 'archived' | 'all');
+                        setFlowPage(1);
+                      }}
+                      className={`rounded-full px-3 py-1.5 text-sm font-semibold transition ${
+                        archiveView === option.key
+                          ? 'bg-[#D9E1F1]/12 text-white'
+                          : 'text-[#D9E1F1]/72'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {user.role !== 'employee' && (
+                <div className="rounded-full border border-[#8FB3E2]/14 bg-[#31487A]/24 px-4 py-2 text-sm text-[#D9E1F1]/82">
+                  Total Amount: <span className="font-semibold text-white">{formatMoney(stats.totalAmount)}</span>
+                </div>
+              )}
             </div>
           </div>
 
           <div className="mt-5 space-y-3">
+            {user.role !== 'employee' && (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div className="panel-muted !p-4">
+                  <p className="text-xs uppercase tracking-[0.14em] text-[#D9E1F1]/56">Pending Amount</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{formatMoney(stats.pendingAmount)}</p>
+                  <p className="mt-1 text-xs text-[#D9E1F1]/62">Requests still waiting for action</p>
+                </div>
+                <div className="panel-muted !p-4">
+                  <p className="text-xs uppercase tracking-[0.14em] text-[#D9E1F1]/56">Released Amount</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{formatMoney(stats.releasedAmount)}</p>
+                  <p className="mt-1 text-xs text-[#D9E1F1]/62">Requests already released</p>
+                </div>
+                <div className="panel-muted !p-4">
+                  <p className="text-xs uppercase tracking-[0.14em] text-[#D9E1F1]/56">Rejected Amount</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{formatMoney(stats.rejectedAmount)}</p>
+                  <p className="mt-1 text-xs text-[#D9E1F1]/62">Requests declined in review</p>
+                </div>
+              </div>
+            )}
+
             {recentRequests.length === 0 && (
               <div className="panel-muted">
                 <p className="text-[#D9E1F1]/72">No requests available yet.</p>
               </div>
             )}
 
-            {recentRequests.map((request: any) => (
+            {paginatedRequests.map((request: any) => (
               <div key={request.id} className="rounded-[24px] border border-[#8FB3E2]/10 bg-[#192338]/34 p-4">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0">
@@ -227,11 +341,30 @@ const Dashboard = () => {
                     <p className="mt-1 break-words text-sm text-[#D9E1F1]/72">
                       {request.request_code} • {request.category} • {formatMoney(toNumber(request.amount))}
                     </p>
+                    <p className="mt-1 text-sm text-[#8FB3E2]/90">
+                      Requested by <span className="font-semibold text-white">{getRequesterName(request)}</span>
+                      <span className="text-[#D9E1F1]/72"> • {getRequesterDepartment(request)}</span>
+                    </p>
                     <p className="mt-2 text-sm text-[#D9E1F1]/84">{getStatusLabel(request.status)}</p>
                   </div>
-                  <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${getStatusTone(request.status)}`}>
-                    {getStatusLabel(request.status)}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                    <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${getStatusTone(request.status)}`}>
+                      {getStatusLabel(request.status)}
+                    </span>
+                    {(user.role === 'supervisor' || user.role === 'accounting' || user.role === 'admin') && ['released', 'rejected'].includes(request.status) && (
+                      <button
+                        type="button"
+                        onClick={() => void toggleArchive(request.id, !request.archived)}
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                          request.archived
+                            ? 'border-emerald-300/30 bg-emerald-500/12 text-emerald-100'
+                            : 'border-amber-300/30 bg-amber-500/12 text-amber-100'
+                        }`}
+                      >
+                        {request.archived ? 'Unarchive' : 'Archive'}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="mt-4 rounded-[22px] border border-[#8FB3E2]/10 bg-black/10 p-3">
@@ -281,6 +414,32 @@ const Dashboard = () => {
                 </div>
               </div>
             ))}
+
+            {recentRequests.length > pageSize && (
+              <div className="flex items-center justify-between gap-3 rounded-[22px] border border-[#8FB3E2]/10 bg-black/10 px-4 py-3">
+                <p className="text-sm text-[#D9E1F1]/72">
+                  Page <span className="font-semibold text-white">{flowPage}</span> of <span className="font-semibold text-white">{totalFlowPages}</span>
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFlowPage((current) => Math.max(1, current - 1))}
+                    disabled={flowPage === 1}
+                    className="btn-secondary !px-4 !py-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFlowPage((current) => Math.min(totalFlowPages, current + 1))}
+                    disabled={flowPage === totalFlowPages}
+                    className="btn-secondary !px-4 !py-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

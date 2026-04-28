@@ -252,9 +252,9 @@ const Reports = () => {
             <option value="released">Released</option>
           </select>
           <select className="field-input" value={filters.archived} onChange={e => setFilters({ ...filters, archived: e.target.value })}>
-            <option value="false">Active Requests</option>
-            <option value="archived">Archived Requests</option>
-            <option value="all">All Requests</option>
+            <option value="false">Active</option>
+            <option value="true">Archived</option>
+            <option value="all">All</option>
           </select>
           <select className="field-input" value={filters.category} onChange={e => setFilters({ ...filters, category: e.target.value })}>
             <option value="">All Categories</option>

@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
-  role TEXT CHECK (role IN ('employee', 'supervisor', 'accounting', 'admin')) NOT NULL,
+  role TEXT CHECK (role IN ('employee', 'supervisor', 'accounting', 'admin', 'super_admin')) NOT NULL,
   department_id UUID,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()

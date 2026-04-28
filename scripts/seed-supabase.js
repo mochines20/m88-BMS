@@ -68,6 +68,13 @@ const users = [
     role: 'admin',
     department_name: 'Admin Department',
   },
+  {
+    name: 'Sarah Super Admin',
+    email: 'sarah.superadmin@madison88.com',
+    password_hash: '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu',
+    role: 'super_admin',
+    department_name: null,
+  },
 ];
 
 async function main() {
@@ -110,7 +117,7 @@ async function main() {
     email: user.email,
     password_hash: user.password_hash,
     role: user.role,
-    department_id: departmentIdByName[`${user.department_name}::${fiscalYear}`],
+    department_id: user.department_name ? departmentIdByName[`${user.department_name}::${fiscalYear}`] : null,
   }));
 
   const { data: existingUsers, error: fetchUserError } = await supabase

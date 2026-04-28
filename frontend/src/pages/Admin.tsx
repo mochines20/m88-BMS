@@ -116,6 +116,8 @@ const getErrorMessage = (err: any, fallback: string) => {
 
 const Admin = () => {
   const [departments, setDepartments] = useState<any[]>([]);
+  const [managedUsers, setManagedUsers] = useState<any[]>([]);
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('');
   const [selectedBreakdown, setSelectedBreakdown] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -230,6 +232,13 @@ const Admin = () => {
 
     return () => window.clearInterval(fxIntervalId);
   }, []);
+
+  useEffect(() => {
+    if (user?.role === 'super_admin') {
+      void fetchManagedUsers();
+      void fetchAuditLogs();
+    }
+  }, [user?.role]);
 
   useEffect(() => {
     if (!selectedDepartmentId) return;
@@ -380,6 +389,51 @@ const Admin = () => {
     }
   };
 
+  const fetchManagedUsers = async () => {
+    const token = localStorage.getItem('token');
+    try {
+      const res = await api.get('/api/auth/users', { headers: { Authorization: `Bearer ${token}` } });
+      setManagedUsers(res.data || []);
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Failed to fetch users'));
+    }
+  };
+
+  const fetchAuditLogs = async () => {
+    const token = localStorage.getItem('token');
+    try {
+      const res = await api.get('/api/requests/audit-logs', { headers: { Authorization: `Bearer ${token}` } });
+      setAuditLogs(res.data || []);
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Failed to fetch audit logs'));
+    }
+  };
+
+  const updateManagedUser = async (userId: string, updates: { name: string; role: string; department_id: string }) => {
+    const token = localStorage.getItem('token');
+    try {
+      await api.patch(`/api/auth/users/${userId}`, updates, { headers: { Authorization: `Bearer ${token}` } });
+      toast.success('User updated!');
+      await fetchManagedUsers();
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Failed to update user'));
+    }
+  };
+
+  const deleteManagedUser = async (userId: string, email: string) => {
+    const token = localStorage.getItem('token');
+    const confirmed = window.confirm(`Delete account for ${email}? This cannot be undone.`);
+    if (!confirmed) return;
+
+    try {
+      await api.delete(`/api/auth/users/${userId}`, { headers: { Authorization: `Bearer ${token}` } });
+      toast.success('User deleted!');
+      await fetchManagedUsers();
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Failed to delete user'));
+    }
+  };
+
   const createNextFiscalYearDepartments = async () => {
     const token = localStorage.getItem('token');
     const baseDepartment = filteredVisibleDepartments[0] || visibleDepartments[0];
@@ -518,6 +572,129 @@ const Admin = () => {
       glow: 'bg-white/10'
     }
   ];
+
+  if (user?.role === 'super_admin') {
+    return (
+      <div className="text-white">
+        <div className="page-header">
+          <h1 className="page-title">Super Admin Console</h1>
+          <p className="page-subtitle">Manage user access and review the latest system audit activity.</p>
+        </div>
+
+        <div className="space-y-6">
+          <div className="panel">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-bold text-white">User Management</h2>
+                <p className="mt-2 text-[#D9E1F1]/72">Update names, roles, and department assignments from one place.</p>
+              </div>
+              <button className="btn-secondary" onClick={() => void fetchManagedUsers()}>Refresh Users</button>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              {managedUsers.map((managedUser) => (
+                <div key={managedUser.id} className="rounded-[24px] border border-[#8FB3E2]/10 bg-black/10 p-4">
+                  <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.1fr)_220px_260px_140px_120px]">
+                    <input
+                      className="field-input"
+                      value={managedUser.name || ''}
+                      onChange={(e) => setManagedUsers((current) => current.map((entry) => entry.id === managedUser.id ? { ...entry, name: e.target.value } : entry))}
+                    />
+                    <select
+                      className="field-input"
+                      value={managedUser.role || 'employee'}
+                      onChange={(e) => setManagedUsers((current) => current.map((entry) => entry.id === managedUser.id ? { ...entry, role: e.target.value } : entry))}
+                    >
+                      <option value="employee">Employee</option>
+                      <option value="supervisor">Supervisor</option>
+                      <option value="accounting">Accounting</option>
+                      <option value="admin">Admin</option>
+                      <option value="super_admin">Super Admin</option>
+                    </select>
+                    <select
+                      className="field-input"
+                      value={managedUser.department_id || ''}
+                      onChange={(e) => setManagedUsers((current) => current.map((entry) => entry.id === managedUser.id ? { ...entry, department_id: e.target.value } : entry))}
+                      disabled={managedUser.role === 'super_admin'}
+                    >
+                      <option value="">No Department</option>
+                      {departments.map((department) => (
+                        <option key={department.id} value={department.id}>
+                          {department.name} - FY {department.fiscal_year}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn-primary"
+                      onClick={() => void updateManagedUser(managedUser.id, {
+                        name: managedUser.name || '',
+                        role: managedUser.role || 'employee',
+                        department_id: managedUser.role === 'super_admin' ? '' : (managedUser.department_id || '')
+                      })}
+                    >
+                      Save User
+                    </button>
+                    <button
+                      className="btn-danger"
+                      onClick={() => void deleteManagedUser(managedUser.id, managedUser.email)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                  <p className="mt-3 text-sm text-[#D9E1F1]/70">
+                    {managedUser.email} • {managedUser.department_name || 'No department'} • Updated {formatDateTime(managedUser.updated_at)}
+                  </p>
+                </div>
+              ))}
+              {managedUsers.length === 0 && (
+                <div className="panel-muted">
+                  <p className="text-[#D9E1F1]/72">No users found.</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-bold text-white">Audit Logs</h2>
+                <p className="mt-2 text-[#D9E1F1]/72">Latest approval, allocation, and request-audit events across the system.</p>
+              </div>
+              <button className="btn-secondary" onClick={() => void fetchAuditLogs()}>Refresh Logs</button>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              {auditLogs.map((log: any, index: number) => (
+                <div key={`${log.log_type}-${log.id || index}`} className="rounded-2xl border border-[#8FB3E2]/10 bg-black/10 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="font-semibold text-white capitalize">
+                        {log.log_type} • {log.action} • {log.request_code || 'No request code'}
+                      </p>
+                      <p className="mt-1 text-sm text-[#D9E1F1]/74">
+                        {log.item_name || 'No item name'} • {log.request_status || 'No status'}
+                      </p>
+                      <p className="mt-2 text-sm text-[#D9E1F1]/84">{log.note || log.new_value || 'No note provided.'}</p>
+                    </div>
+                    <div className="text-sm text-[#D9E1F1]/68 lg:text-right">
+                      <p>{log.actor_name || 'System'}</p>
+                      <p className="capitalize">{log.actor_role || 'system'}</p>
+                      <p>{formatDateTime(log.event_time || log.created_at || log.timestamp)}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {auditLogs.length === 0 && (
+                <div className="panel-muted">
+                  <p className="text-[#D9E1F1]/72">No audit logs available yet.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="text-white">
