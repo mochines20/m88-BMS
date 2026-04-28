@@ -48,6 +48,7 @@ const Login = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [forgotEmail, setForgotEmail] = useState('');
   const navigate = useNavigate();
+  const isAuthBusy = isSubmitting || isSendingReset;
 
   const companyEmail = useMemo(() => {
     const trimmedHandle = emailHandle.trim().toLowerCase();
@@ -142,6 +143,7 @@ const Login = () => {
       const res = await api.post('/api/auth/login', { email, password });
       localStorage.setItem('token', res.data.token);
       toast.success('Login successful!');
+      await new Promise((resolve) => setTimeout(resolve, 450));
       navigate('/');
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Login failed');
@@ -191,6 +193,7 @@ const Login = () => {
 
       localStorage.setItem('token', res.data.token);
       toast.success('Account created successfully!');
+      await new Promise((resolve) => setTimeout(resolve, 450));
       navigate('/');
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Sign up failed');
@@ -212,30 +215,61 @@ const Login = () => {
   return (
     <div className="app-shell flex min-h-screen items-center justify-center px-4 py-10">
       <Toaster position="top-right" />
+      {isAuthBusy && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm">
+          <div className="panel w-full max-w-sm text-center">
+            <div className="mx-auto mb-5 flex items-center justify-center">
+              <div className="bms-spinner" />
+            </div>
+            <p className="text-lg font-semibold text-white">Signing you in</p>
+            <p className="mt-2 text-sm text-[var(--role-text)]/70">Please wait while we secure your session.</p>
+            <div className="mt-6 space-y-3">
+              <div className="bms-shimmer h-3 w-full rounded-full" />
+              <div className="bms-shimmer h-3 w-10/12 rounded-full" />
+              <div className="bms-shimmer h-3 w-8/12 rounded-full" />
+            </div>
+          </div>
+        </div>
+      )}
       <div className="grid w-full max-w-6xl gap-8 lg:grid-cols-[1.1fr_0.9fr]">
         <div className="hidden rounded-[36px] border border-white/10 bg-white/5 p-10 backdrop-blur-xl lg:block">
           <img
             src="/madison88-logo.png"
             alt="Madison88"
-            className="h-16 w-auto rounded-2xl border border-[#D9E1F1]/40 bg-[#f8fbff] px-4 py-3 shadow-[0_10px_28px_rgba(5,10,20,0.22)]"
+            className="h-16 w-auto rounded-2xl border border-white/15 bg-[#f8fbff] px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.28)]"
           />
           <h1 className="mt-6 max-w-lg text-5xl font-bold leading-tight text-white">
             Streamline budget requests, approvals, and reporting in one secure workspace.
           </h1>
-          <p className="mt-6 max-w-xl text-lg text-[#D9E1F1]/80">
+          <p className="mt-6 max-w-xl text-lg text-[var(--role-text)]/80">
             Track every request clearly, speed up approvals, and keep your team aligned with a more organized budgeting system.
           </p>
           <div className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="panel-muted">
-              <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/60">Request Flow</p>
+            <div className="group panel-muted hover:border-[var(--role-primary)]/30">
+              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--role-secondary)]/20 bg-gradient-to-br from-[var(--role-primary)]/20 to-[var(--role-secondary)]/10">
+                <svg className="h-5 w-5 text-[var(--role-secondary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/60">Request Flow</p>
               <p className="mt-2 text-lg font-semibold text-white">Submit to Release</p>
             </div>
-            <div className="panel-muted">
-              <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/60">Approvals</p>
+            <div className="group panel-muted hover:border-[var(--role-primary)]/30">
+              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--role-secondary)]/20 bg-gradient-to-br from-[var(--role-primary)]/20 to-[var(--role-secondary)]/10">
+                <svg className="h-5 w-5 text-[var(--role-secondary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+              </div>
+              <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/60">Approvals</p>
               <p className="mt-2 text-lg font-semibold text-white">Supervisor + Accounting</p>
             </div>
-            <div className="panel-muted">
-              <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/60">Reports</p>
+            <div className="group panel-muted hover:border-[var(--role-primary)]/30">
+              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--role-secondary)]/20 bg-gradient-to-br from-[var(--role-primary)]/20 to-[var(--role-secondary)]/10">
+                <svg className="h-5 w-5 text-[var(--role-secondary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/60">Reports</p>
               <p className="mt-2 text-lg font-semibold text-white">Fast Export</p>
             </div>
           </div>
@@ -246,26 +280,26 @@ const Login = () => {
             <img
               src="/madison88-logo.png"
               alt="Madison88"
-              className="mx-auto mb-5 h-14 w-auto rounded-2xl border border-[#D9E1F1]/40 bg-[#f8fbff] px-4 py-3 shadow-[0_10px_28px_rgba(5,10,20,0.2)]"
+              className="mx-auto mb-5 h-14 w-auto rounded-2xl border border-white/15 bg-[#f8fbff] px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.26)]"
             />
             <div className="mx-auto mb-5 inline-flex rounded-full border border-white/10 bg-white/5 p-1">
               <button
                 type="button"
                 onClick={() => handleModeChange('signin')}
-                className={`rounded-full px-4 py-2 text-sm font-medium transition ${mode === 'signin' ? 'bg-[#8FB3E2] text-[#13213d]' : 'text-[#D9E1F1]/78 hover:text-white'}`}
+                className={`rounded-full px-4 py-2 text-sm font-medium transition ${mode === 'signin' ? 'bg-[var(--role-secondary)] text-[#111827]' : 'text-[var(--role-text)]/78 hover:text-white'}`}
               >
                 Sign In
               </button>
               <button
                 type="button"
                 onClick={() => handleModeChange('signup')}
-                className={`rounded-full px-4 py-2 text-sm font-medium transition ${mode === 'signup' ? 'bg-[#8FB3E2] text-[#13213d]' : 'text-[#D9E1F1]/78 hover:text-white'}`}
+                className={`rounded-full px-4 py-2 text-sm font-medium transition ${mode === 'signup' ? 'bg-[var(--role-secondary)] text-[#111827]' : 'text-[var(--role-text)]/78 hover:text-white'}`}
               >
                 Sign Up
               </button>
             </div>
             <h1 className="text-3xl font-semibold text-white">{mode === 'signin' ? 'Sign In' : 'Create Account'}</h1>
-            <p className="mt-2 text-sm text-[#D9E1F1]/78">
+            <p className="mt-2 text-sm text-[var(--role-text)]/78">
               {mode === 'signin'
                 ? 'Access the Madison88 Budget Management System.'
                 : 'Register with your Madison88 email and assigned department.'}
@@ -295,12 +329,12 @@ const Login = () => {
                       placeholder="juan.dela.cruz"
                       value={emailHandle}
                       onChange={(e) => setEmailHandle(e.target.value.replace(/\s+/g, ''))}
-                      className="min-w-0 flex-1 bg-transparent text-white outline-none placeholder:text-[#D9E1F1]/40"
+                      className="min-w-0 flex-1 bg-transparent text-white outline-none placeholder:text-[var(--role-text)]/40"
                       required
                     />
-                    <span className="shrink-0 text-sm text-[#D9E1F1]/70">@{COMPANY_EMAIL_DOMAIN}</span>
+                    <span className="shrink-0 text-sm text-[var(--role-text)]/70">@{COMPANY_EMAIL_DOMAIN}</span>
                   </div>
-                  <p className="mt-2 text-xs text-[#D9E1F1]/58">
+                  <p className="mt-2 text-xs text-[var(--role-text)]/58">
                     Final email: {companyEmail || `your.name@${COMPANY_EMAIL_DOMAIN}`}
                   </p>
                 </div>
@@ -325,9 +359,9 @@ const Login = () => {
               </>
             )}
 
-            {mode === 'signin' && (
-              <div>
-                <label className="field-label">Email</label>
+            <div className="relative">
+              <label className="field-label">Email</label>
+              <div className="relative">
                 <input
                   type="email"
                   placeholder={`admin@${COMPANY_EMAIL_DOMAIN}`}
@@ -338,45 +372,63 @@ const Login = () => {
                       setForgotEmail(e.target.value);
                     }
                   }}
-                  className="field-input"
+                  className="field-input pr-12"
                   required
                 />
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4">
+                  <svg className="h-5 w-5 text-[var(--role-text)]/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
+                  </svg>
+                </div>
               </div>
-            )}
+            </div>
 
             <div>
               <div className="mb-2 flex items-center justify-between">
                 <label className="field-label !mb-0">Password</label>
-                <div className="flex items-center gap-4">
-                  {mode === 'signin' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowForgotPassword((current) => !current);
-                        setForgotEmail((current) => current || email);
-                      }}
-                      className="text-sm text-[#8FB3E2] transition hover:text-white"
-                    >
-                      Forgot password?
-                    </button>
-                  )}
-                  <button type="button" onClick={() => setShowPassword(!showPassword)} className="text-sm text-[#D9E1F1]/78 transition hover:text-white">
-                    {showPassword ? 'Hide' : 'Show'}
+                {mode === 'signin' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowForgotPassword((current) => !current);
+                      setForgotEmail((current) => current || email);
+                    }}
+                    className="text-xs font-medium text-[var(--role-secondary)] transition hover:text-white"
+                  >
+                    Forgot password?
                   </button>
-                </div>
+                )}
               </div>
-              <input
-                type={showPassword ? 'text' : 'password'}
-                placeholder={mode === 'signin' ? 'Enter your password' : 'Create a password'}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="field-input"
-                required
-              />
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder={mode === 'signin' ? 'Enter your password' : 'Create a password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="field-input pr-12"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute inset-y-0 right-0 flex items-center pr-4 text-[var(--role-text)]/60 transition hover:text-white"
+                >
+                  {showPassword ? (
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                    </svg>
+                  ) : (
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
             </div>
 
             {mode === 'signin' && showForgotPassword && (
-              <div className="rounded-2xl border border-[#8FB3E2]/25 bg-white/5 p-4">
+              <div className="rounded-2xl border border-[var(--role-secondary)]/22 bg-black/20 p-4">
                 <label className="field-label">Reset Email</label>
                 <input
                   type="email"
@@ -385,14 +437,14 @@ const Login = () => {
                   onChange={(e) => setForgotEmail(e.target.value)}
                   className="field-input"
                 />
-                <p className="mt-2 text-xs text-[#D9E1F1]/60">
+                <p className="mt-2 text-xs text-[var(--role-text)]/60">
                   We’ll check the email against the users table and send a reset link if it exists.
                 </p>
                 <button
                   type="button"
                   onClick={() => void handleForgotPassword()}
                   disabled={isSendingReset}
-                  className="mt-4 w-full rounded-2xl border border-[#8FB3E2]/35 bg-[#8FB3E2]/16 px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#8FB3E2]/22 disabled:cursor-not-allowed disabled:opacity-70"
+                  className="mt-4 w-full rounded-2xl border border-[var(--role-secondary)]/32 bg-[var(--role-secondary)]/14 px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--role-secondary)]/20 disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {isSendingReset ? 'Sending reset link...' : 'Send Reset Link'}
                 </button>
@@ -400,22 +452,56 @@ const Login = () => {
             )}
 
             {mode === 'signup' && (
-              <div>
+              <div className="relative">
                 <label className="field-label">Confirm Password</label>
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Re-enter your password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="field-input"
-                  required
-                />
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Re-enter your password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="field-input pr-12"
+                    required
+                  />
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4">
+                    <svg className="h-5 w-5 text-[var(--role-text)]/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                  </div>
+                </div>
               </div>
             )}
 
-            <button type="submit" className="btn-primary w-full" disabled={isSubmitting || (mode === 'signup' && isLoadingDepartments)}>
-              {isSubmitting ? (mode === 'signin' ? 'Signing in...' : 'Creating account...') : mode === 'signin' ? 'Login' : 'Create Account'}
-            </button>
+            <div className="relative pt-2">
+              <button
+                type="submit"
+                className="btn-primary group relative w-full overflow-hidden"
+                disabled={isSubmitting || (mode === 'signup' && isLoadingDepartments)}
+              >
+                <span className={`relative z-10 flex items-center justify-center gap-2 transition-opacity ${isSubmitting ? 'opacity-0' : 'opacity-100'}`}>
+                  {mode === 'signin' ? (
+                    <>
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                      </svg>
+                      Login
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                      </svg>
+                      Create Account
+                    </>
+                  )}
+                </span>
+                {isSubmitting && (
+                  <span className="absolute inset-0 flex items-center justify-center">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  </span>
+                )}
+              </button>
+            </div>
           </form>
         </div>
       </div>

@@ -10,16 +10,19 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-router-dom": "^6.8.0",
-    "axios": "^1.4.0",
-    "tailwindcss": "^3.3.0",
-    "autoprefixer": "^10.4.14",
-    "postcss": "^8.4.21",
     "@headlessui/react": "^1.7.14",
     "@heroicons/react": "^2.0.17",
-    "react-hot-toast": "^2.4.1"
+    "autoprefixer": "^10.4.14",
+    "axios": "^1.4.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.7",
+    "postcss": "^8.4.21",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-hot-toast": "^2.4.1",
+    "react-router-dom": "^6.8.0",
+    "recharts": "^3.8.1",
+    "tailwindcss": "^3.3.0"
   },
   "devDependencies": {
     "@types/react": "^18.0.28",

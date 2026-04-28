@@ -5,14 +5,47 @@
 @layer base {
   :root {
     color-scheme: dark;
+    --role-primary: #2A9D8F;
+    --role-secondary: #E9C46A;
+    --role-accent: rgba(42, 157, 143, 0.22);
+    --role-surface: rgba(15, 27, 45, 0.72);
+    --role-border: rgba(233, 196, 106, 0.16);
+    --role-text: #EAF1FF;
+    --bms-bg-0: #070B14;
+    --bms-bg-1: #0B1220;
+    --bms-bg-2: #0F1B2D;
+    --bms-muted: rgba(234, 241, 255, 0.74);
+  }
+
+  [data-role="supervisor"] {
+    --role-primary: #264653;
+    --role-secondary: #2A9D8F;
+    --role-accent: rgba(42, 157, 143, 0.22);
+  }
+
+  [data-role="accounting"] {
+    --role-primary: #E9C46A;
+    --role-secondary: #F4A261;
+    --role-accent: rgba(233, 196, 106, 0.22);
+  }
+
+  [data-role="admin"],
+  [data-role="super_admin"] {
+    --role-primary: #31487A;
+    --role-secondary: #8FB3E2;
+    --role-accent: rgba(49, 72, 122, 0.22);
   }
 
   html {
-    @apply bg-[#192338];
+    background-color: var(--bms-bg-1);
   }
 
   body {
-    @apply min-h-screen bg-[radial-gradient(circle_at_top,_rgba(143,179,226,0.18),_transparent_28%),linear-gradient(180deg,_#192338_0%,_#1E2F4F_48%,_#192338_100%)] text-[#D9E1F1] antialiased;
+    @apply min-h-screen antialiased;
+    color: var(--role-text);
+    background: radial-gradient(circle at top, rgba(233, 196, 106, 0.12), transparent 30%),
+                radial-gradient(circle at bottom left, rgba(42, 157, 143, 0.18), transparent 38%),
+                linear-gradient(180deg, var(--bms-bg-0) 0%, var(--bms-bg-1) 48%, var(--bms-bg-2) 100%);
     font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
   }
 
@@ -29,15 +62,16 @@
 
   input::placeholder,
   textarea::placeholder {
-    color: rgba(143, 179, 226, 0.7);
+    color: rgba(233, 196, 106, 0.62);
   }
 
   select option {
-    @apply bg-[#192338] text-[#D9E1F1];
+    background-color: var(--bms-bg-1);
+    color: var(--role-text);
   }
 
   ::selection {
-    background-color: rgba(143, 179, 226, 0.4);
+    background-color: rgba(233, 196, 106, 0.28);
     @apply text-white;
   }
 
@@ -47,11 +81,11 @@
   }
 
   ::-webkit-scrollbar-track {
-    background: rgba(25, 35, 56, 0.92);
+    background: rgba(11, 18, 32, 0.92);
   }
 
   ::-webkit-scrollbar-thumb {
-    background: rgba(143, 179, 226, 0.28);
+    background: rgba(233, 196, 106, 0.22);
     border-radius: 9999px;
   }
 
@@ -69,7 +103,10 @@
 
 @layer components {
   .app-shell {
-    @apply min-h-screen bg-[radial-gradient(circle_at_top,_rgba(143,179,226,0.16),_transparent_25%),radial-gradient(circle_at_bottom_right,_rgba(49,72,122,0.24),_transparent_22%),linear-gradient(180deg,_#192338_0%,_#1E2F4F_42%,_#192338_100%)];
+    @apply min-h-screen;
+    background: radial-gradient(circle at top, rgba(233, 196, 106, 0.12), transparent 26%),
+                radial-gradient(circle at bottom right, rgba(42, 157, 143, 0.2), transparent 28%),
+                linear-gradient(180deg, var(--bms-bg-0) 0%, var(--bms-bg-1) 42%, var(--bms-bg-2) 100%);
     animation: appAmbient 18s ease-in-out infinite alternate;
   }
 
@@ -83,13 +120,13 @@
 
   .page-subtitle {
     @apply max-w-full text-sm md:text-lg;
-    color: rgba(217, 225, 241, 0.8);
+    color: var(--bms-muted);
   }
 
   .panel {
     @apply rounded-[28px] border p-4 sm:p-6 shadow-[0_24px_80px_rgba(8,14,28,0.42)] backdrop-blur-xl;
-    border-color: rgba(143, 179, 226, 0.16);
-    background-color: rgba(30, 47, 79, 0.58);
+    border-color: var(--role-border);
+    background-color: var(--role-surface);
     transition:
       transform 220ms ease,
       border-color 220ms ease,
@@ -97,10 +134,16 @@
       box-shadow 220ms ease;
   }
 
+  .panel:hover {
+    transform: translateY(-3px);
+    border-color: rgba(233, 196, 106, 0.22);
+    box-shadow: 0 32px 96px rgba(8, 14, 28, 0.52);
+  }
+
   .panel-muted {
     @apply rounded-2xl border p-3 sm:p-4 backdrop-blur-md;
-    border-color: rgba(143, 179, 226, 0.14);
-    background-color: rgba(49, 72, 122, 0.28);
+    border-color: var(--role-border);
+    background-color: rgba(15, 27, 45, 0.56);
     transition:
       transform 220ms ease,
       border-color 220ms ease,
@@ -109,58 +152,102 @@
 
   .nav-surface {
     @apply sticky top-0 z-10 border-b backdrop-blur-xl;
-    border-color: rgba(143, 179, 226, 0.14);
-    background-color: rgba(25, 35, 56, 0.78);
+    border-color: rgba(233, 196, 106, 0.12);
+    background-color: rgba(11, 18, 32, 0.78);
     animation: navDrop 480ms cubic-bezier(0.2, 0.8, 0.2, 1);
   }
 
   .nav-link {
     @apply inline-flex items-center rounded-full border px-4 py-2 text-sm font-medium text-white transition;
-    border-color: rgba(143, 179, 226, 0.14);
-    background-color: rgba(49, 72, 122, 0.2);
+    border-color: rgba(233, 196, 106, 0.14);
+    background-color: rgba(15, 27, 45, 0.68);
   }
 
   .nav-link-accent {
     @apply inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold text-white transition;
-    border-color: rgba(143, 179, 226, 0.32);
-    background-color: #31487A;
+    border-color: var(--role-secondary);
+    background-color: var(--role-primary);
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center rounded-2xl border bg-gradient-to-r from-[#31487A] via-[#3c578f] to-[#8FB3E2] px-5 py-3 font-semibold text-white shadow-[0_18px_48px_rgba(49,72,122,0.34)] transition hover:brightness-110 disabled:opacity-50;
-    border-color: rgba(143, 179, 226, 0.35);
+    @apply inline-flex items-center justify-center rounded-2xl border px-5 py-3 font-semibold text-white shadow-[0_18px_48px_rgba(42,157,143,0.26)] transition-all;
+    border-color: var(--role-secondary);
+    background: linear-gradient(135deg, var(--role-primary), var(--role-secondary));
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 20px 56px rgba(42, 157, 143, 0.32);
+  }
+
+  .btn-primary:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 12px 36px rgba(42, 157, 143, 0.22);
   }
 
   .btn-secondary {
-    @apply inline-flex items-center justify-center rounded-2xl border px-5 py-3 font-semibold text-white transition disabled:opacity-50;
-    border-color: rgba(143, 179, 226, 0.14);
-    background-color: rgba(49, 72, 122, 0.24);
+    @apply inline-flex items-center justify-center rounded-2xl border px-5 py-3 font-semibold text-white transition-all;
+    border-color: rgba(233, 196, 106, 0.14);
+    background-color: rgba(15, 27, 45, 0.74);
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    border-color: rgba(233, 196, 106, 0.35);
+    background-color: rgba(15, 27, 45, 0.92);
+    transform: translateY(-1px);
   }
 
   .btn-success {
     @apply inline-flex items-center justify-center rounded-2xl border px-5 py-3 font-semibold text-white transition;
-    border-color: rgba(143, 179, 226, 0.28);
-    background-color: rgba(143, 179, 226, 0.14);
+    border-color: rgba(42, 157, 143, 0.28);
+    background-color: rgba(42, 157, 143, 0.14);
   }
 
   .btn-danger {
     @apply inline-flex items-center justify-center rounded-2xl border px-5 py-3 font-semibold text-white transition;
-    border-color: rgba(217, 225, 241, 0.24);
-    background-color: rgba(217, 225, 241, 0.1);
+    border-color: rgba(233, 196, 106, 0.2);
+    background-color: rgba(233, 196, 106, 0.08);
   }
 
   .field-label {
-    @apply mb-2 block text-sm font-semibold tracking-wide text-[#D9E1F1];
+    @apply mb-2 block text-sm font-semibold tracking-wide;
+    color: rgba(234, 241, 255, 0.86);
   }
 
   .field-input {
-    @apply w-full rounded-2xl border px-4 py-3 text-white outline-none transition focus:ring-2;
-    border-color: rgba(143, 179, 226, 0.14);
-    background-color: rgba(25, 35, 56, 0.48);
+    @apply w-full rounded-2xl border px-4 py-3 text-white outline-none transition;
+    border-color: rgba(233, 196, 106, 0.14);
+    background-color: rgba(11, 18, 32, 0.6);
+  }
+
+  .field-input:focus {
+    border-color: rgba(233, 196, 106, 0.5);
+    box-shadow: 0 0 0 3px rgba(233, 196, 106, 0.12), 0 4px 16px rgba(42, 157, 143, 0.08);
+  }
+
+  .field-input:not(:placeholder-shown) {
+    border-color: rgba(233, 196, 106, 0.3);
   }
 
   .stat-card {
     @apply panel relative overflow-hidden;
+    transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
+  }
+
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--role-primary), var(--role-secondary));
+    opacity: 0;
+    transition: opacity 220ms ease;
+  }
+
+  .stat-card:hover::before {
+    opacity: 1;
   }
 
   .route-shell {
@@ -239,66 +326,73 @@
 
   .table-shell {
     @apply overflow-hidden rounded-[24px] border;
-    border-color: rgba(143, 179, 226, 0.14);
-    background-color: rgba(30, 47, 79, 0.58);
+    border-color: rgba(233, 196, 106, 0.14);
+    background-color: rgba(15, 27, 45, 0.72);
   }
 
   .table-header {
     @apply border-b text-left text-xs font-semibold uppercase tracking-[0.18em];
-    border-color: rgba(143, 179, 226, 0.14);
-    background-color: rgba(49, 72, 122, 0.28);
-    color: rgba(217, 225, 241, 0.78);
+    border-color: rgba(233, 196, 106, 0.14);
+    background-color: rgba(15, 27, 45, 0.76);
+    color: rgba(234, 241, 255, 0.7);
   }
 
   .table-row {
     @apply border-b transition;
-    border-color: rgba(143, 179, 226, 0.12);
+    border-color: rgba(233, 196, 106, 0.12);
   }
 
   .badge {
     @apply inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white;
+    border-color: rgba(233, 196, 106, 0.2);
+    background-color: rgba(15, 27, 45, 0.6);
   }
 
   .nav-link:hover {
-    border-color: rgba(143, 179, 226, 0.28);
-    background-color: rgba(49, 72, 122, 0.38);
+    border-color: rgba(233, 196, 106, 0.28);
+    background-color: rgba(15, 27, 45, 0.88);
     transform: translateY(-1px);
   }
 
   .nav-link-accent:hover {
-    background-color: #3b568f;
-    transform: translateY(-1px);
-  }
-
-  .btn-secondary:hover {
-    background-color: rgba(49, 72, 122, 0.4);
+    filter: brightness(1.06);
     transform: translateY(-1px);
   }
 
   .btn-success:hover {
-    background-color: rgba(143, 179, 226, 0.22);
+    background-color: rgba(42, 157, 143, 0.22);
     transform: translateY(-1px);
   }
 
   .btn-danger:hover {
-    background-color: rgba(217, 225, 241, 0.16);
+    background-color: rgba(233, 196, 106, 0.14);
     transform: translateY(-1px);
   }
 
-  .field-input:focus {
-    border-color: rgba(143, 179, 226, 0.5);
-    --tw-ring-color: rgba(143, 179, 226, 0.2);
-  }
-
   .table-row:hover {
-    background-color: rgba(49, 72, 122, 0.18);
+    background-color: rgba(42, 157, 143, 0.08);
   }
 
-  .panel:hover,
   .panel-muted:hover,
   .stat-card:hover {
     transform: translateY(-2px);
-    border-color: rgba(143, 179, 226, 0.22);
+    border-color: rgba(233, 196, 106, 0.22);
+  }
+
+  .bms-spinner {
+    width: 56px;
+    height: 56px;
+    border-radius: 9999px;
+    background: conic-gradient(from 180deg, rgba(233, 196, 106, 0.12), rgba(233, 196, 106, 0.95), rgba(42, 157, 143, 0.95), rgba(233, 196, 106, 0.12));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 0);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 0);
+    animation: spinSlow 1.1s linear infinite;
+  }
+
+  .bms-shimmer {
+    background: linear-gradient(90deg, rgba(234, 241, 255, 0.06), rgba(233, 196, 106, 0.16), rgba(234, 241, 255, 0.06));
+    background-size: 240% 100%;
+    animation: shimmer 1.25s ease-in-out infinite;
   }
 }
 
@@ -353,13 +447,13 @@
   100% {
     opacity: 0.55;
     transform: scale(0.92);
-    box-shadow: 0 0 0 0 rgba(143, 179, 226, 0.08);
+    box-shadow: 0 0 0 0 rgba(233, 196, 106, 0.08);
   }
 
   50% {
     opacity: 1;
     transform: scale(1);
-    box-shadow: 0 0 0 16px rgba(143, 179, 226, 0);
+    box-shadow: 0 0 0 16px rgba(233, 196, 106, 0);
   }
 }
 
@@ -370,5 +464,21 @@
 
   to {
     background-position: 4% 0%, 96% 100%, 50% 52%;
+  }
+}
+
+@keyframes spinSlow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  100% {
+    background-position: 100% 50%;
   }
 }

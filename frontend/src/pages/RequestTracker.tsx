@@ -36,13 +36,13 @@ const getStatusLabel = (status: string) => {
 
 const getStatusColor = (status: string) => {
   switch (status) {
-    case 'pending_supervisor': return 'border-[#8FB3E2]/28 bg-[#31487A]/55 text-[#D9E1F1]';
-    case 'pending_accounting': return 'border-[#8FB3E2]/32 bg-[#8FB3E2]/18 text-[#D9E1F1]';
+    case 'pending_supervisor': return 'border-[var(--role-secondary)]/28 bg-[var(--role-primary)]/55 text-[var(--role-text)]';
+    case 'pending_accounting': return 'border-[var(--role-secondary)]/32 bg-[var(--role-secondary)]/18 text-[var(--role-text)]';
     case 'approved':
-    case 'released': return 'border-[#D9E1F1]/24 bg-[#D9E1F1]/12 text-[#D9E1F1]';
-    case 'returned_for_revision': return 'border-[#8FB3E2]/22 bg-[#31487A]/24 text-[#D9E1F1]';
-    case 'rejected': return 'border-[#8FB3E2]/18 bg-[#192338] text-[#D9E1F1]/84';
-    default: return 'border-[#8FB3E2]/14 bg-[#1E2F4F]/60 text-white';
+    case 'released': return 'border-[var(--role-text)]/24 bg-[var(--role-text)]/12 text-[var(--role-text)]';
+    case 'returned_for_revision': return 'border-[var(--role-secondary)]/22 bg-[var(--role-primary)]/24 text-[var(--role-text)]';
+    case 'rejected': return 'border-[var(--role-secondary)]/18 bg-[#192338] text-[var(--role-text)]/84';
+    default: return 'border-[var(--role-secondary)]/14 bg-[#1E2F4F]/60 text-white';
   }
 };
 
@@ -76,7 +76,37 @@ const buildFlow = (status: string) => [
 const RequestTracker = () => {
   const [requests, setRequests] = useState<any[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
-  const [liquidationDraft, setLiquidationDraft] = useState({ actual_amount: '', remarks: '' });
+  const [liquidationDraft, setLiquidationDraft] = useState({ actual_amount: '', remarks: '', file_url: '' });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [sortBy, setSortBy] = useState<'date' | 'amount'>('date');
+
+  const filteredRequests = useMemo(() => {
+    let filtered = [...requests];
+
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(req =>
+        req.item_name?.toLowerCase().includes(query) ||
+        req.request_code?.toLowerCase().includes(query) ||
+        req.category?.toLowerCase().includes(query) ||
+        req.status?.toLowerCase().includes(query)
+      );
+    }
+
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(req => req.status === statusFilter);
+    }
+
+    filtered.sort((a, b) => {
+      if (sortBy === 'date') {
+        return new Date(b.submitted_at || 0).getTime() - new Date(a.submitted_at || 0).getTime();
+      }
+      return Number(b.amount) - Number(a.amount);
+    });
+
+    return filtered;
+  }, [requests, searchQuery, statusFilter, sortBy]);
 
   useEffect(() => {
     fetchRequests();
@@ -102,6 +132,16 @@ const RequestTracker = () => {
       }
     } catch {
       if (showError) toast.error('Failed to fetch requests');
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // In a real app, you would upload to Supabase Storage or similar.
+      // For now, we simulate a URL.
+      setLiquidationDraft(current => ({ ...current, file_url: URL.createObjectURL(file) }));
+      toast.success('Image attached!');
     }
   };
 
@@ -134,12 +174,13 @@ const RequestTracker = () => {
         `/api/requests/${selectedRequest.id}/liquidation`,
         {
           actual_amount: Number(liquidationDraft.actual_amount),
-          remarks: liquidationDraft.remarks
+          remarks: liquidationDraft.remarks,
+          attachment_url: liquidationDraft.file_url
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       toast.success('Liquidation submitted!');
-      setLiquidationDraft({ actual_amount: '', remarks: '' });
+      setLiquidationDraft({ actual_amount: '', remarks: '', file_url: '' });
       await fetchRequests(false);
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Liquidation failed');
@@ -149,13 +190,41 @@ const RequestTracker = () => {
   return (
     <div className="text-white">
       <div className="page-header">
-        <h1 className="page-title">My Expense Requests</h1>
-        <p className="page-subtitle">Every request now shows a clearer approval flow so you can immediately see where it is waiting.</p>
+        <h1 className="page-title">Request History</h1>
+        <p className="page-subtitle">Track your submitted requests and monitor their progress through the approval pipeline.</p>
+      </div>
+
+      <div className="mb-4 panel">
+        <div className="flex flex-wrap gap-3">
+          <div className="flex-1 min-w-[200px]">
+            <input
+              type="text"
+              className="field-input"
+              placeholder="Search by item, code, category..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <select className="field-input w-auto" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="all">All Status</option>
+            <option value="pending_supervisor">Pending Supervisor</option>
+            <option value="pending_accounting">Pending Accounting</option>
+            <option value="approved">Approved</option>
+            <option value="released">Released</option>
+            <option value="rejected">Rejected</option>
+            <option value="returned_for_revision">Returned</option>
+          </select>
+          <select className="field-input w-auto" value={sortBy} onChange={e => setSortBy(e.target.value as 'date' | 'amount')}>
+            <option value="date">Sort by Date</option>
+            <option value="amount">Sort by Amount</option>
+          </select>
+        </div>
+        <p className="mt-2 text-sm text-[#D9E1F1]/60">{filteredRequests.length} of {requests.length} requests</p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <div className="space-y-4">
-          {requests.map((req) => (
+          {filteredRequests.map((req) => (
             <div
               key={req.id}
               className={`panel cursor-pointer transition hover:border-white/20 hover:bg-slate-950/45 ${selectedRequest?.id === req.id ? 'border-[#8FB3E2]/28 bg-[#31487A]/18' : ''}`}
@@ -378,6 +447,38 @@ const RequestTracker = () => {
                     value={liquidationDraft.remarks}
                     onChange={(event) => setLiquidationDraft((current) => ({ ...current, remarks: event.target.value }))}
                   />
+                  
+                  <div className="flex flex-col gap-3">
+                    <label className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/60">Attach Official Receipt / Image</label>
+                    <div className="relative">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleFileChange}
+                        className="hidden"
+                        id="liquidation-attachment"
+                      />
+                      <label
+                        htmlFor="liquidation-attachment"
+                        className="flex w-full cursor-pointer items-center justify-center gap-3 rounded-[22px] border border-dashed border-[#8FB3E2]/30 bg-black/10 py-6 transition hover:border-[#8FB3E2]/50 hover:bg-black/20"
+                      >
+                        <span className="text-2xl">📸</span>
+                        <span className="text-sm font-semibold text-[#D9E1F1]">
+                          {liquidationDraft.file_url ? 'Change Image' : 'Click to Upload Receipt'}
+                        </span>
+                      </label>
+                    </div>
+                    {liquidationDraft.file_url && (
+                      <div className="mt-2 overflow-hidden rounded-2xl border border-[#8FB3E2]/20">
+                        <img 
+                          src={liquidationDraft.file_url} 
+                          alt="Liquidation attachment" 
+                          className="h-auto max-h-[200px] w-full object-contain bg-black/20" 
+                        />
+                      </div>
+                    )}
+                  </div>
+
                   <button className="btn-primary" onClick={() => void submitLiquidation()}>
                     Submit Liquidation
                   </button>

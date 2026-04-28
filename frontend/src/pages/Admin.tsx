@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
+import Modal from '../components/Modal';
 
 const DEFAULT_FX_RATE = 56.0;
 const FX_ENDPOINT = 'https://api.frankfurter.dev/v1/latest?base=USD&symbols=PHP';
@@ -118,6 +119,7 @@ const Admin = () => {
   const [departments, setDepartments] = useState<any[]>([]);
   const [managedUsers, setManagedUsers] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [systemHealth, setSystemHealth] = useState<any>(null);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('');
   const [selectedBreakdown, setSelectedBreakdown] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -140,6 +142,19 @@ const Admin = () => {
     amount: '',
     purpose: '',
     action: 'replenish' as 'replenish' | 'disburse'
+  });
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type: 'confirm' | 'alert' | 'prompt';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    type: 'confirm'
   });
 
   const visibleDepartments = useMemo(() => {
@@ -237,8 +252,19 @@ const Admin = () => {
     if (user?.role === 'super_admin') {
       void fetchManagedUsers();
       void fetchAuditLogs();
+      void fetchSystemHealth();
     }
   }, [user?.role]);
+
+  const fetchSystemHealth = async () => {
+    const token = localStorage.getItem('token');
+    try {
+      const res = await api.get('/api/system/health', { headers: { Authorization: `Bearer ${token}` } });
+      setSystemHealth(res.data);
+    } catch {
+      setSystemHealth(null);
+    }
+  };
 
   useEffect(() => {
     if (!selectedDepartmentId) return;
@@ -420,18 +446,24 @@ const Admin = () => {
     }
   };
 
-  const deleteManagedUser = async (userId: string, email: string) => {
-    const token = localStorage.getItem('token');
-    const confirmed = window.confirm(`Delete account for ${email}? This cannot be undone.`);
-    if (!confirmed) return;
-
-    try {
-      await api.delete(`/api/auth/users/${userId}`, { headers: { Authorization: `Bearer ${token}` } });
-      toast.success('User deleted!');
-      await fetchManagedUsers();
-    } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Failed to delete user'));
-    }
+  const deleteManagedUser = (userId: string, email: string) => {
+    setModalConfig({
+      isOpen: true,
+      title: 'Delete Account',
+      message: `Are you sure you want to delete the account for ${email}? This action cannot be undone and all associated data will be removed.`,
+      type: 'confirm',
+      onConfirm: async () => {
+        const token = localStorage.getItem('token');
+        try {
+          await api.delete(`/api/auth/users/${userId}`, { headers: { Authorization: `Bearer ${token}` } });
+          toast.success('User deleted!');
+          await fetchManagedUsers();
+        } catch (err: any) {
+          toast.error(getErrorMessage(err, 'Failed to delete user'));
+        }
+        setModalConfig(prev => ({ ...prev, isOpen: false }));
+      }
+    });
   };
 
   const createNextFiscalYearDepartments = async () => {
@@ -582,6 +614,33 @@ const Admin = () => {
         </div>
 
         <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <div className="panel !p-5">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#D9E1F1]/60">System Status</p>
+              <h3 className="mt-3 text-2xl font-bold text-white" style={{ color: systemHealth?.backend?.status === 'healthy' ? '#10B981' : '#EF4444' }}>
+                {systemHealth?.backend?.status === 'healthy' ? 'Healthy' : 'Degraded'}
+              </h3>
+              <p className="mt-1 text-xs text-[#D9E1F1]/70">Server Uptime: {Math.floor((systemHealth?.backend?.uptime || 0) / 3600)}h {Math.floor(((systemHealth?.backend?.uptime || 0) % 3600) / 60)}m</p>
+            </div>
+            <div className="panel !p-5">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#D9E1F1]/60">Database</p>
+              <h3 className="mt-3 text-2xl font-bold text-white" style={{ color: systemHealth?.supabase?.status === 'healthy' ? '#10B981' : '#EF4444' }}>
+                {systemHealth?.supabase?.status === 'healthy' ? 'Connected' : 'Error'}
+              </h3>
+              <p className="mt-1 text-xs text-[#D9E1F1]/70">{systemHealth?.supabase?.error || 'All systems operational'}</p>
+            </div>
+            <div className="panel !p-5">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#D9E1F1]/60">Total Users</p>
+              <h3 className="mt-3 text-2xl font-bold text-white">{systemHealth?.counts?.users || 0}</h3>
+              <p className="mt-1 text-xs text-[#D9E1F1]/70">Registered accounts</p>
+            </div>
+            <div className="panel !p-5">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#D9E1F1]/60">Active Depts</p>
+              <h3 className="mt-3 text-2xl font-bold text-white">{systemHealth?.counts?.departments || 0}</h3>
+              <p className="mt-1 text-xs text-[#D9E1F1]/70">Fiscal departments</p>
+            </div>
+          </div>
+
           <div className="panel">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -1376,6 +1435,15 @@ const Admin = () => {
           </button>
         </div>
       )}
+      <Modal
+        isOpen={modalConfig.isOpen}
+        title={modalConfig.title}
+        message={modalConfig.message}
+        type={modalConfig.type}
+        onClose={() => setModalConfig(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={modalConfig.onConfirm}
+        confirmLabel={modalConfig.type === 'confirm' ? 'Delete Account' : 'Confirm'}
+      />
     </div>
   );
 };

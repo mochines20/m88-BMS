@@ -360,6 +360,65 @@ router.post('/', authenticate, authorize('employee'), async (req: any, res) => {
   res.json(responseRows[0]);
 });
 
+// GET /api/requests/audit-logs
+router.get('/audit-logs', authenticate, async (req: any, res) => {
+  if (req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const [approvalLogsResult, allocationLogsResult, auditLogsResult] = await Promise.all([
+    supabase.from('approval_logs').select('*').order('timestamp', { ascending: false }).limit(150),
+    supabase.from('allocation_logs').select('*').order('created_at', { ascending: false }).limit(150),
+    supabase.from('request_audit_logs').select('*').order('created_at', { ascending: false }).limit(150)
+  ]);
+
+  if (approvalLogsResult.error) return res.status(400).json({ error: approvalLogsResult.error });
+  if (allocationLogsResult.error) return res.status(400).json({ error: allocationLogsResult.error });
+  if (auditLogsResult.error) return res.status(400).json({ error: auditLogsResult.error });
+
+  const approvalLogs = (approvalLogsResult.data || []).map((log: any) => ({
+    ...log,
+    log_type: 'approval',
+    event_time: log.timestamp
+  }));
+  const allocationLogs = (allocationLogsResult.data || []).map((log: any) => ({
+    ...log,
+    log_type: 'allocation',
+    event_time: log.created_at
+  }));
+  const auditLogs = (auditLogsResult.data || []).map((log: any) => ({
+    ...log,
+    log_type: 'audit',
+    event_time: log.created_at
+  }));
+
+  const combinedLogs = [...approvalLogs, ...allocationLogs, ...auditLogs]
+    .sort((left: any, right: any) => new Date(right.event_time).getTime() - new Date(left.event_time).getTime())
+    .slice(0, 200);
+
+  const actorIds = Array.from(new Set(combinedLogs.map((log: any) => log.actor_id).filter(Boolean)));
+  const requestIds = Array.from(new Set(combinedLogs.map((log: any) => log.request_id).filter(Boolean)));
+
+  const [{ data: actors }, { data: requests }] = await Promise.all([
+    actorIds.length ? supabase.from('users').select('id, name, role').in('id', actorIds) : { data: [] as any[] },
+    requestIds.length ? supabase.from('expense_requests').select('id, request_code, item_name, status').in('id', requestIds) : { data: [] as any[] }
+  ]);
+
+  const actorMap = new Map((actors || []).map((actor: any) => [actor.id, actor]));
+  const requestMap = new Map((requests || []).map((request: any) => [request.id, request]));
+
+  res.json(
+    combinedLogs.map((log: any) => ({
+      ...log,
+      actor_name: actorMap.get(log.actor_id)?.name || 'System',
+      actor_role: actorMap.get(log.actor_id)?.role || '',
+      request_code: requestMap.get(log.request_id)?.request_code || '',
+      item_name: requestMap.get(log.request_id)?.item_name || '',
+      request_status: requestMap.get(log.request_id)?.status || ''
+    }))
+  );
+});
+
 // GET /api/requests/:id
 router.get('/:id', authenticate, async (req: any, res) => {
   const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
@@ -793,6 +852,7 @@ router.patch('/:id/liquidation', authenticate, authorize('employee'), async (req
   const { id } = req.params;
   const actualAmount = toNumber(req.body?.actual_amount);
   const remarks = toText(req.body?.remarks);
+  const attachmentUrl = toText(req.body?.attachment_url);
   const { data: request, error: requestError } = await supabase.from('expense_requests').select('*').eq('id', id).single();
 
   if (requestError || !request) return res.status(400).json({ error: requestError || 'Request not found.' });
@@ -850,6 +910,20 @@ router.patch('/:id/liquidation', authenticate, authorize('employee'), async (req
   }
 
   if (result.error) return res.status(400).json({ error: result.error });
+
+  // Handle attachment if provided
+  if (attachmentUrl) {
+    await supabase.from('request_attachments').insert({
+      request_id: id,
+      liquidation_id: result.data.id,
+      attachment_scope: 'liquidation',
+      attachment_type: 'receipt',
+      file_name: `liquidation-receipt-${result.data.liquidation_no}.png`,
+      file_url: attachmentUrl,
+      uploaded_by: req.user.id,
+      uploaded_at: new Date()
+    });
+  }
 
   await insertAuditLogs(id, req.user.id, [
     {
@@ -911,65 +985,6 @@ router.patch('/:id/liquidation/review', authenticate, authorize('accounting', 'a
   ]);
 
   res.json(data);
-});
-
-// GET /api/requests/:id/timeline
-router.get('/audit-logs', authenticate, async (req: any, res) => {
-  if (req.user.role !== 'super_admin') {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-
-  const [approvalLogsResult, allocationLogsResult, auditLogsResult] = await Promise.all([
-    supabase.from('approval_logs').select('*').order('timestamp', { ascending: false }).limit(150),
-    supabase.from('allocation_logs').select('*').order('created_at', { ascending: false }).limit(150),
-    supabase.from('request_audit_logs').select('*').order('created_at', { ascending: false }).limit(150)
-  ]);
-
-  if (approvalLogsResult.error) return res.status(400).json({ error: approvalLogsResult.error });
-  if (allocationLogsResult.error) return res.status(400).json({ error: allocationLogsResult.error });
-  if (auditLogsResult.error) return res.status(400).json({ error: auditLogsResult.error });
-
-  const approvalLogs = (approvalLogsResult.data || []).map((log: any) => ({
-    ...log,
-    log_type: 'approval',
-    event_time: log.timestamp
-  }));
-  const allocationLogs = (allocationLogsResult.data || []).map((log: any) => ({
-    ...log,
-    log_type: 'allocation',
-    event_time: log.created_at
-  }));
-  const auditLogs = (auditLogsResult.data || []).map((log: any) => ({
-    ...log,
-    log_type: 'audit',
-    event_time: log.created_at
-  }));
-
-  const combinedLogs = [...approvalLogs, ...allocationLogs, ...auditLogs]
-    .sort((left: any, right: any) => new Date(right.event_time).getTime() - new Date(left.event_time).getTime())
-    .slice(0, 200);
-
-  const actorIds = Array.from(new Set(combinedLogs.map((log: any) => log.actor_id).filter(Boolean)));
-  const requestIds = Array.from(new Set(combinedLogs.map((log: any) => log.request_id).filter(Boolean)));
-
-  const [{ data: actors }, { data: requests }] = await Promise.all([
-    actorIds.length ? supabase.from('users').select('id, name, role').in('id', actorIds) : { data: [] as any[] },
-    requestIds.length ? supabase.from('expense_requests').select('id, request_code, item_name, status').in('id', requestIds) : { data: [] as any[] }
-  ]);
-
-  const actorMap = new Map((actors || []).map((actor: any) => [actor.id, actor]));
-  const requestMap = new Map((requests || []).map((request: any) => [request.id, request]));
-
-  res.json(
-    combinedLogs.map((log: any) => ({
-      ...log,
-      actor_name: actorMap.get(log.actor_id)?.name || 'System',
-      actor_role: actorMap.get(log.actor_id)?.role || '',
-      request_code: requestMap.get(log.request_id)?.request_code || '',
-      item_name: requestMap.get(log.request_id)?.item_name || '',
-      request_status: requestMap.get(log.request_id)?.status || ''
-    }))
-  );
 });
 
 // GET /api/requests/:id/timeline

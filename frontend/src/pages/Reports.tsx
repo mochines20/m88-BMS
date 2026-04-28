@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 
 interface DepartmentOption {
   id: string;
@@ -83,6 +86,11 @@ const Reports = () => {
     categories: [],
     fiscal_years: []
   });
+  const [activeTab, setActiveTab] = useState<'requests' | 'cash_advance'>('requests');
+  const [agingType, setAgingType] = useState<'all' | 'overdue' | 'due_soon'>('all');
+  const [cashAdvanceAging, setCashAdvanceAging] = useState<any[]>([]);
+  const [agingSummary, setAgingSummary] = useState<any>(null);
+  const [agingLoaded, setAgingLoaded] = useState(false);
 
   const getAuthHeaders = () => {
     const token = localStorage.getItem('token');
@@ -178,13 +186,63 @@ const Reports = () => {
     }
   };
 
+  const fetchCashAdvanceAging = async () => {
+    try {
+      const res = await api.get('/api/sla/check-liquidations', { headers: getAuthHeaders() });
+      setAgingSummary(res.data.summary);
+      setCashAdvanceAging([
+        ...(res.data.overdue || []).map((item: any) => ({ ...item, aging_status: 'overdue' })),
+        ...(res.data.due_soon || []).map((item: any) => ({ ...item, aging_status: 'due_soon' })),
+        ...(res.data.upcoming || []).map((item: any) => ({ ...item, aging_status: 'upcoming' }))
+      ]);
+      setAgingLoaded(true);
+    } catch {
+      toast.error('Failed to fetch cash advance aging');
+    }
+  };
+
   useEffect(() => {
     void fetchUser();
     void fetchFilterOptions();
     void fetchSummary();
   }, []);
 
+  useEffect(() => {
+    if (activeTab === 'cash_advance') {
+      void fetchCashAdvanceAging();
+    }
+  }, [activeTab]);
+
   const exportReport = async (format: string) => {
+    if (format === 'pdf') {
+      const doc = new jsPDF();
+      doc.setFontSize(18);
+      doc.text('Madison88 Budget Request Report', 14, 22);
+      doc.setFontSize(10);
+      doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
+      doc.text(`Filters: FY ${filters.fiscal_year || 'All'}, Status: ${filters.status || 'All'}`, 14, 36);
+
+      autoTable(doc, {
+        startY: 42,
+        head: [['Request Code', 'Department', 'Category', 'Item', 'Amount', 'Status', 'Submitted']],
+        body: requests.map(req => [
+          req.request_code,
+          req.departments?.name || '-',
+          req.category || '-',
+          req.item_name?.substring(0, 30) + (req.item_name?.length > 30 ? '...' : ''),
+          `PHP ${Number(req.amount).toLocaleString()}`,
+          req.status?.replace('_', ' ') || '-',
+          req.submitted_at ? new Date(req.submitted_at).toLocaleDateString() : '-'
+        ]),
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [49, 72, 122] }
+      });
+
+      doc.save('budget-report.pdf');
+      toast.success('PDF downloaded!');
+      return;
+    }
+
     try {
       const params = new URLSearchParams({ ...filters, format });
       const res = await api.get(`/api/reports/summary?${params}`, {
@@ -202,6 +260,44 @@ const Reports = () => {
       toast.error('Export failed');
     }
   };
+
+  const formatMoney = (value: number) =>
+    new Intl.NumberFormat('en-PH', {
+      style: 'currency',
+      currency: 'PHP',
+      minimumFractionDigits: 2
+    }).format(value);
+
+  const chartColors = ['#31487A', '#8FB3E2', '#D9E1F1', '#4F46E5', '#059669'];
+
+  const statusChartData = [
+    { name: 'Approved', value: summary?.approved || 0 },
+    { name: 'Rejected', value: summary?.rejected || 0 },
+    { name: 'Pending', value: (summary?.total_requests || 0) - ((summary?.approved || 0) + (summary?.rejected || 0)) }
+  ].filter(d => d.value > 0);
+
+  const monthlyChartData = requests.reduce((acc: any[], req) => {
+    const month = req.submitted_at ? new Date(req.submitted_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'Unknown';
+    const existing = acc.find(item => item.month === month);
+    if (existing) {
+      existing.amount += Number(req.amount);
+      existing.count += 1;
+    } else {
+      acc.push({ month, amount: Number(req.amount), count: 1 });
+    }
+    return acc;
+  }, []).sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime());
+
+  const categoryChartData = requests.reduce<{name: string; value: number}[]>((acc, req) => {
+    const cat = req.category || 'Uncategorized';
+    const existing = acc.find((item: {name: string; value: number}) => item.name === cat);
+    if (existing) {
+      existing.value += 1;
+    } else {
+      acc.push({ name: cat, value: 1 });
+    }
+    return acc;
+  }, []).filter((d: {value: number}) => d.value > 0);
 
   const archiveRequest = async (requestId: string, archived: boolean) => {
     try {
@@ -221,6 +317,30 @@ const Reports = () => {
         <p className="page-subtitle">Filter expense activity, generate summaries, and export clean reports for management review.</p>
       </div>
 
+      <div className="mb-6 flex gap-2">
+        <button
+          onClick={() => setActiveTab('requests')}
+          className={`px-4 py-2 rounded-lg font-medium transition-all ${
+            activeTab === 'requests'
+              ? 'bg-gradient-to-r from-[#31487A] to-[#8FB3E2] text-white shadow-lg'
+              : 'bg-white/10 text-white/70 hover:bg-white/20'
+          }`}
+        >
+          Request Reports
+        </button>
+        <button
+          onClick={() => setActiveTab('cash_advance')}
+          className={`px-4 py-2 rounded-lg font-medium transition-all ${
+            activeTab === 'cash_advance'
+              ? 'bg-gradient-to-r from-[#31487A] to-[#8FB3E2] text-white shadow-lg'
+              : 'bg-white/10 text-white/70 hover:bg-white/20'
+          }`}
+        >
+          Cash Advance Aging
+        </button>
+      </div>
+
+      {activeTab === 'requests' && (
       <div className="panel mb-6">
         <h2 className="text-2xl font-bold text-white">Filters</h2>
         <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -272,6 +392,7 @@ const Reports = () => {
           <button onClick={() => exportReport('excel')} className="btn-secondary">Export Excel</button>
         </div>
       </div>
+      )}
 
       {summary && (
         <div className="panel mb-6">
@@ -292,6 +413,89 @@ const Reports = () => {
             <div className="panel-muted text-center">
               <p className="text-3xl font-bold text-white">PHP {summary.total_amount.toFixed(2)}</p>
               <p className="mt-2 text-[#D9E1F1]/78">Total Amount</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {summary && requests.length > 0 && (
+        <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div className="panel">
+            <h3 className="text-lg font-bold text-white">Requests by Status</h3>
+            <div className="mt-4 h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={statusChartData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={90}
+                    paddingAngle={5}
+                    dataKey="value"
+                    label={({ name, percent }: any) => `${name || ''} ${((percent || 0) * 100).toFixed(0)}%`}
+                  >
+                    {statusChartData.map((_, index) => (
+                      <Cell key={`cell-${index}`} fill={chartColors[index % chartColors.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value: any) => [value, 'Requests']} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="panel">
+            <h3 className="text-lg font-bold text-white">Monthly Spending Trend</h3>
+            <div className="mt-4 h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={monthlyChartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#8FB3E220" />
+                  <XAxis dataKey="month" stroke="#8FB3E2" fontSize={12} />
+                  <YAxis stroke="#8FB3E2" fontSize={12} tickFormatter={(v: number) => `₱${(v/1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(value: any) => [formatMoney(Number(value)), 'Amount']} />
+                  <Line type="monotone" dataKey="amount" stroke="#8FB3E2" strokeWidth={3} dot={{ fill: '#8FB3E2' }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="panel">
+            <h3 className="text-lg font-bold text-white">Requests by Category</h3>
+            <div className="mt-4 h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={categoryChartData} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#8FB3E220" />
+                  <XAxis type="number" stroke="#8FB3E2" fontSize={12} />
+                  <YAxis dataKey="name" type="category" stroke="#8FB3E2" fontSize={10} width={100} />
+                  <Tooltip />
+                  <Bar dataKey="value" fill="#31487A" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="panel">
+            <h3 className="text-lg font-bold text-white">Department Budget Overview</h3>
+            <div className="mt-4 space-y-3">
+              {filterOptions.departments.slice(0, 5).map((dept) => {
+                const deptRequests = requests.filter(r => r.department_id === dept.id);
+                const totalAmount = deptRequests.reduce((sum, r) => sum + Number(r.amount), 0);
+                return (
+                  <div key={dept.id} className="space-y-1">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-white">{dept.name}</span>
+                      <span className="text-[#8FB3E2]">{deptRequests.length} requests</span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                      <div 
+                        className="h-full rounded-full bg-gradient-to-r from-[#31487A] to-[#8FB3E2]"
+                        style={{ width: `${Math.min((totalAmount / (summary?.total_amount || 1)) * 100, 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -362,6 +566,110 @@ const Reports = () => {
           <p className="text-xl font-semibold text-white">No matching requests found</p>
           <p className="mt-2 text-[#D9E1F1]/78">The current filters did not return any requests.</p>
         </div>
+      )}
+
+      {activeTab === 'cash_advance' && (
+        <>
+          {agingSummary && (
+            <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+              <div className="panel">
+                <p className="text-sm text-[#D9E1F1]/78">Total Liquidations</p>
+                <p className="mt-1 text-2xl font-bold text-white">{agingSummary.total}</p>
+              </div>
+              <div className="panel border-l-4 border-red-500">
+                <p className="text-sm text-[#D9E1F1]/78">Overdue</p>
+                <p className="mt-1 text-2xl font-bold text-red-400">{agingSummary.overdue}</p>
+              </div>
+              <div className="panel border-l-4 border-yellow-500">
+                <p className="text-sm text-[#D9E1F1]/78">Due Soon (3 days)</p>
+                <p className="mt-1 text-2xl font-bold text-yellow-400">{agingSummary.due_soon}</p>
+              </div>
+              <div className="panel border-l-4 border-green-500">
+                <p className="text-sm text-[#D9E1F1]/78">Upcoming</p>
+                <p className="mt-1 text-2xl font-bold text-green-400">{agingSummary.upcoming}</p>
+              </div>
+            </div>
+          )}
+
+          <div className="mb-4 flex gap-2">
+            <button
+              onClick={() => setAgingType('all')}
+              className={`px-3 py-1 rounded text-sm ${agingType === 'all' ? 'bg-[#31487A] text-white' : 'bg-white/10 text-white/70'}`}
+            >
+              All
+            </button>
+            <button
+              onClick={() => setAgingType('overdue')}
+              className={`px-3 py-1 rounded text-sm ${agingType === 'overdue' ? 'bg-red-600 text-white' : 'bg-white/10 text-white/70'}`}
+            >
+              Overdue
+            </button>
+            <button
+              onClick={() => setAgingType('due_soon')}
+              className={`px-3 py-1 rounded text-sm ${agingType === 'due_soon' ? 'bg-yellow-600 text-white' : 'bg-white/10 text-white/70'}`}
+            >
+              Due Soon
+            </button>
+          </div>
+
+          <div className="panel">
+            <h2 className="text-2xl font-bold text-white">Cash Advance Aging Report</h2>
+            {agingLoaded && cashAdvanceAging.length > 0 && (
+              <div className="table-shell mt-5 overflow-x-auto">
+                <table className="w-full text-sm text-[#D9E1F1]">
+                  <thead>
+                    <tr className="table-header">
+                      <th className="p-4">Liquidation No.</th>
+                      <th className="p-4">Request Code</th>
+                      <th className="p-4">Employee</th>
+                      <th className="p-4">Item</th>
+                      <th className="p-4">Amount</th>
+                      <th className="p-4">Due Date</th>
+                      <th className="p-4">Status</th>
+                      <th className="p-4">Days</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cashAdvanceAging
+                      .filter(item => agingType === 'all' || item.aging_status === agingType)
+                      .map((item) => (
+                      <tr key={item.id} className="table-row">
+                        <td className="p-4">{item.liquidation_no}</td>
+                        <td className="p-4">{item.request_code}</td>
+                        <td className="p-4">{item.employee_name}</td>
+                        <td className="p-4">{item.item_name}</td>
+                        <td className="p-4">PHP {Number(item.amount).toFixed(2)}</td>
+                        <td className="p-4">{item.due_at ? new Date(item.due_at).toLocaleDateString() : '-'}</td>
+                        <td className="p-4">
+                          <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
+                            item.aging_status === 'overdue' ? 'bg-red-500/20 text-red-400' :
+                            item.aging_status === 'due_soon' ? 'bg-yellow-500/20 text-yellow-400' :
+                            'bg-green-500/20 text-green-400'
+                          }`}>
+                            {item.aging_status === 'overdue' ? `Overdue (${item.days_overdue}d)` :
+                             item.aging_status === 'due_soon' ? 'Due Soon' : 'Upcoming'}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          {item.aging_status === 'overdue' ? (
+                            <span className="text-red-400">{item.days_overdue} days overdue</span>
+                          ) : (
+                            <span>{item.days_until_due} days</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {agingLoaded && cashAdvanceAging.filter(item => agingType === 'all' || item.aging_status === agingType).length === 0 && (
+              <div className="mt-6 text-center">
+                <p className="text-lg text-[#D9E1F1]/78">No liquidations in this category</p>
+              </div>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

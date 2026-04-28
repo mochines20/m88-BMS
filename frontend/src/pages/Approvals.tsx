@@ -41,6 +41,7 @@ const getRequesterName = (req: any) =>
 const Approvals = () => {
   const [requests, setRequests] = useState<any[]>([]);
   const [user, setUser] = useState<any>(null);
+  const [view, setView] = useState<'pending' | 'liquidations'>('pending');
   const [departments, setDepartments] = useState<any[]>([]);
   const [allocationDrafts, setAllocationDrafts] = useState<Record<string, Array<{ department_id: string; amount: string }>>>({});
   const [priorityDrafts, setPriorityDrafts] = useState<Record<string, string>>({});
@@ -48,7 +49,23 @@ const Approvals = () => {
   const [expandedRequests, setExpandedRequests] = useState<Record<string, boolean>>({});
   const [expandedSplits, setExpandedSplits] = useState<Record<string, boolean>>({});
   const [savingRequestId, setSavingRequestId] = useState('');
-  const [returnModalRequestId, setReturnModalRequestId] = useState('');
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    requestId: string;
+    type: 'return' | 'reject';
+    title: string;
+    message: string;
+    placeholder: string;
+    confirmLabel: string;
+  }>({
+    isOpen: false,
+    requestId: '',
+    type: 'return',
+    title: '',
+    message: '',
+    placeholder: '',
+    confirmLabel: ''
+  });
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -71,7 +88,7 @@ const Approvals = () => {
     }, 5000);
 
     return () => window.clearInterval(intervalId);
-  }, [user?.role]);
+  }, [user?.role, view]);
 
   const fetchDepartments = async () => {
     const token = localStorage.getItem('token');
@@ -87,14 +104,21 @@ const Approvals = () => {
     const token = localStorage.getItem('token');
     try {
       const res = await api.get('/api/requests', { headers: { Authorization: `Bearer ${token}` } });
-      const pending = res.data.filter((request: any) =>
-        (role === 'supervisor' && request.status === 'pending_supervisor') ||
-        (role === 'accounting' && request.status === 'pending_accounting')
-      );
-      setRequests(pending);
+      
+      // Filter based on view
+      const filtered = res.data.filter((request: any) => {
+        if (view === 'pending') {
+          return (role === 'supervisor' && request.status === 'pending_supervisor') ||
+                 (role === 'accounting' && request.status === 'pending_accounting');
+        } else {
+          return request.latest_liquidation?.status === 'submitted';
+        }
+      });
+
+      setRequests(filtered);
       setAllocationDrafts((current) => {
         const next = { ...current };
-        pending.forEach((request: any) => {
+        filtered.forEach((request: any) => {
           if (!next[request.id]) {
             next[request.id] = (request.allocations || []).map((allocation: any) => ({
               department_id: allocation.department_id,
@@ -106,7 +130,7 @@ const Approvals = () => {
       });
       setPriorityDrafts((current) => {
         const next = { ...current };
-        pending.forEach((request: any) => {
+        filtered.forEach((request: any) => {
           if (!next[request.id]) {
             next[request.id] = request.priority || 'normal';
           }
@@ -115,7 +139,7 @@ const Approvals = () => {
       });
       setReleaseDrafts((current) => {
         const next = { ...current };
-        pending.forEach((request: any) => {
+        filtered.forEach((request: any) => {
           if (!next[request.id]) {
             next[request.id] = {
               release_method: request.release_method || 'bank_transfer',
@@ -132,7 +156,23 @@ const Approvals = () => {
     }
   };
 
+  const handleLiquidationReview = async (requestId: string, status: 'verified' | 'returned') => {
+    const token = localStorage.getItem('token');
+    try {
+      await api.patch(`/api/requests/${requestId}/liquidation/review`, { status }, { headers: { Authorization: `Bearer ${token}` } });
+      toast.success(`Liquidation ${status === 'verified' ? 'verified' : 'returned'}!`);
+      await fetchRequests();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Review failed');
+    }
+  };
+
   const handleApprove = async (request: any) => {
+    if (view === 'liquidations') {
+      await handleLiquidationReview(request.id, 'verified');
+      return;
+    }
+
     const token = localStorage.getItem('token');
     try {
       if (user?.role === 'accounting') {
@@ -169,6 +209,11 @@ const Approvals = () => {
   };
 
   const handleReturn = async (requestId: string, reason: string) => {
+    if (view === 'liquidations') {
+      await handleLiquidationReview(requestId, 'returned');
+      return;
+    }
+
     const token = localStorage.getItem('token');
     const normalizedReason = String(reason || '').trim();
     if (!normalizedReason) {
@@ -179,7 +224,6 @@ const Approvals = () => {
     try {
       await api.patch(`/api/requests/${requestId}/return`, { reason: normalizedReason }, { headers: { Authorization: `Bearer ${token}` } });
       toast.success('Request returned for revision!');
-      setReturnModalRequestId('');
       fetchRequests();
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Return failed');
@@ -307,9 +351,30 @@ const Approvals = () => {
   return (
     <div className="text-white">
       <div className="page-header">
-        <h1 className="page-title">Pending Approvals</h1>
-        <p className="page-subtitle">Review incoming requests with department ownership, projected deductions, and split allocations before you approve.</p>
+        <h1 className="page-title">{user?.role === 'supervisor' ? 'Team Approvals' : 'Finance Review'}</h1>
+        <p className="page-subtitle">
+          {user?.role === 'supervisor' 
+            ? 'Review and approve requests from your department.' 
+            : 'Finalize fund releases and verify liquidation documents.'}
+        </p>
       </div>
+
+      {user?.role === 'accounting' && (
+        <div className="mb-6 flex gap-4">
+          <button 
+            onClick={() => setView('pending')} 
+            className={`btn-secondary !rounded-full !px-6 ${view === 'pending' ? 'bg-white/10 border-white/20' : 'opacity-50'}`}
+          >
+            Pending Releases
+          </button>
+          <button 
+            onClick={() => setView('liquidations')} 
+            className={`btn-secondary !rounded-full !px-6 ${view === 'liquidations' ? 'bg-white/10 border-white/20' : 'opacity-50'}`}
+          >
+            Liquidation Review
+          </button>
+        </div>
+      )}
 
       {requests.length === 0 ? (
         <div className="panel text-center">
@@ -340,6 +405,11 @@ const Approvals = () => {
                         <span className="rounded-full border border-[#8FB3E2]/16 bg-[#31487A]/22 px-3 py-1 text-sm font-medium text-white">
                           {getStatusLabel(req.status)}
                         </span>
+                        {view === 'liquidations' && (
+                          <span className="rounded-full border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-sm font-bold text-emerald-400">
+                            Liquidation Submitted
+                          </span>
+                        )}
                       </div>
                       <p className="mt-2 text-lg text-[#D9E1F1]">{formatMoney(requestAmount)} • {req.category}</p>
                       <p className={`mt-3 max-w-2xl text-[#D9E1F1]/80 ${isExpanded ? '' : 'approval-card-description'}`}>{req.purpose}</p>
@@ -356,6 +426,57 @@ const Approvals = () => {
 
                 <div className={`approval-card-details ${isExpanded ? 'approval-card-details-open' : 'approval-card-details-closed'}`}>
                   <div className="pt-5">
+                    {view === 'liquidations' && req.latest_liquidation && (
+                      <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+                        <div className="space-y-4">
+                          <div className="panel-muted !border-emerald-500/10 !bg-emerald-500/5">
+                            <h3 className="text-sm font-bold uppercase tracking-widest text-emerald-400">Liquidation Details</h3>
+                            <div className="mt-4 space-y-3">
+                              <div className="flex justify-between">
+                                <span className="text-[#D9E1F1]/60">Actual Amount:</span>
+                                <span className="font-bold text-white">{formatMoney(toNumber(req.latest_liquidation.actual_amount))}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-[#D9E1F1]/60">Difference:</span>
+                                <span className={`font-bold ${toNumber(req.latest_liquidation.actual_amount) > toNumber(req.amount) ? 'text-orange-400' : 'text-emerald-400'}`}>
+                                  {formatMoney(toNumber(req.latest_liquidation.actual_amount) - toNumber(req.amount))}
+                                </span>
+                              </div>
+                              <div className="pt-2">
+                                <p className="text-xs uppercase tracking-wider text-[#D9E1F1]/50">Remarks:</p>
+                                <p className="mt-1 text-sm italic text-white">"{req.latest_liquidation.remarks || 'No remarks provided'}"</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="mb-2 text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/56">Receipt / Attachment</p>
+                          {req.attachments?.filter((a: any) => a.attachment_scope === 'liquidation').map((attachment: any) => (
+                            <div key={attachment.id} className="group relative overflow-hidden rounded-2xl border border-[#8FB3E2]/20 bg-black/20">
+                              <img 
+                                src={attachment.file_url} 
+                                alt="Receipt" 
+                                className="h-auto max-h-[300px] w-full object-contain transition group-hover:scale-105"
+                              />
+                              <a 
+                                href={attachment.file_url} 
+                                target="_blank" 
+                                rel="noreferrer"
+                                className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition group-hover:opacity-100"
+                              >
+                                <span className="btn-secondary">View Full Image</span>
+                              </a>
+                            </div>
+                          )) || (
+                            <div className="flex h-[200px] items-center justify-center rounded-2xl border border-dashed border-white/10 bg-black/10">
+                              <p className="text-[#D9E1F1]/40">No receipt attached</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="mb-5 mt-5">
                       <p className="text-sm text-[#8FB3E2]/90">
                         Requested by <span className="font-semibold text-white">{getRequesterName(req)}</span>
@@ -564,14 +685,34 @@ const Approvals = () => {
                       </button>
                       <button
                         onClick={() => {
-                          const reason = prompt('Rejection reason:');
-                          if (reason) handleReject(req.id, reason);
+                          setModalConfig({
+                            isOpen: true,
+                            requestId: req.id,
+                            type: 'reject',
+                            title: 'Reject Request',
+                            message: 'Provide a reason for rejecting this request. This will be visible to the requester.',
+                            placeholder: 'Enter rejection reason...',
+                            confirmLabel: 'Reject Request'
+                          });
                         }}
                         className="btn-danger"
                       >
                         Reject
                       </button>
-                      <button onClick={() => setReturnModalRequestId(req.id)} className="btn-secondary">
+                      <button
+                        onClick={() => {
+                          setModalConfig({
+                            isOpen: true,
+                            requestId: req.id,
+                            type: 'return',
+                            title: 'Return for Revision',
+                            message: 'Explain what needs to be corrected before this request can move forward.',
+                            placeholder: 'Enter the revision details or reason for return...',
+                            confirmLabel: 'Send Back'
+                          });
+                        }}
+                        className="btn-secondary"
+                      >
                         Return for Revision
                       </button>
                     </div>
@@ -584,17 +725,20 @@ const Approvals = () => {
       )}
 
       <Modal
-        isOpen={Boolean(returnModalRequestId)}
-        onClose={() => setReturnModalRequestId('')}
+        isOpen={modalConfig.isOpen}
+        onClose={() => setModalConfig(prev => ({ ...prev, isOpen: false }))}
         onConfirm={(value) => {
-          if (returnModalRequestId) {
-            void handleReturn(returnModalRequestId, value);
+          if (modalConfig.type === 'reject') {
+            void handleReject(modalConfig.requestId, value);
+          } else {
+            void handleReturn(modalConfig.requestId, value);
           }
+          setModalConfig(prev => ({ ...prev, isOpen: false }));
         }}
-        title="Return for Revision"
-        message="Explain what needs to be corrected before this request can move forward."
-        placeholder="Enter the revision details or reason for return..."
-        confirmLabel="Send Back"
+        title={modalConfig.title}
+        message={modalConfig.message}
+        placeholder={modalConfig.placeholder}
+        confirmLabel={modalConfig.confirmLabel}
         cancelLabel="Cancel"
         type="prompt"
       />

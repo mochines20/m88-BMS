@@ -8,6 +8,10 @@ import departmentRoutes from './routes/departments';
 import expenseRoutes from './routes/expenses';
 import pettyCashRoutes from './routes/pettyCash';
 import reportRoutes from './routes/reports';
+import projectRoutes from './routes/projects';
+import vendorRoutes from './routes/vendors';
+import slaRoutes from './routes/sla';
+import budgetAlertRoutes from './routes/budgetAlerts';
 
 dotenv.config();
 
@@ -24,6 +28,10 @@ app.use('/api/departments', departmentRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/petty-cash', pettyCashRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/projects', projectRoutes);
+app.use('/api/vendors', vendorRoutes);
+app.use('/api/sla', slaRoutes);
+app.use('/api/budget-alerts', budgetAlertRoutes);
 
 const PORT = process.env.PORT || 5000;
 

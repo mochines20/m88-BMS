@@ -1075,6 +1075,39 @@ app.get('/api/auth/me', authenticate, async (req, res) => {
   }
 });
 
+app.get('/api/notifications', authenticate, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    if (error) return res.status(400).json({ error });
+    res.json(data || []);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/notifications/:id/read', authenticate, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('id', req.params.id)
+      .eq('user_id', req.user.id)
+      .select()
+      .single();
+
+    if (error) return res.status(400).json({ error });
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/auth/users', authenticate, async (req, res) => {
   try {
     if (req.user.role !== 'super_admin') {
@@ -1174,6 +1207,39 @@ app.delete('/api/auth/users/:id', authenticate, async (req, res) => {
   }
 });
 
+app.get('/api/system/health', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const start = Date.now();
+    const [{ count: userCount }, { count: deptCount }, { error: dbError }] = await Promise.all([
+      supabase.from('users').select('*', { count: 'exact', head: true }),
+      supabase.from('departments').select('*', { count: 'exact', head: true }),
+      supabase.from('users').select('id').limit(1)
+    ]);
+
+    res.json({
+      backend: {
+        status: 'healthy',
+        uptime: process.uptime(),
+        latency_ms: Date.now() - start
+      },
+      supabase: {
+        status: dbError ? 'error' : 'healthy',
+        error: dbError ? dbError.message : null
+      },
+      counts: {
+        users: userCount || 0,
+        departments: deptCount || 0
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Requests routes
 app.get('/api/requests', authenticate, async (req, res) => {
   try {
@@ -1247,6 +1313,52 @@ app.post('/api/requests', authenticate, authorize(['employee']), async (req, res
     });
 
     res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/requests/audit-logs', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const [approvalLogsResult, allocationLogsResult] = await Promise.all([
+      supabase.from('approval_logs').select('*').order('timestamp', { ascending: false }).limit(150),
+      supabase.from('allocation_logs').select('*').order('created_at', { ascending: false }).limit(150)
+    ]);
+
+    if (approvalLogsResult.error) return res.status(400).json({ error: approvalLogsResult.error });
+    if (allocationLogsResult.error) return res.status(400).json({ error: allocationLogsResult.error });
+
+    const approvalLogs = (approvalLogsResult.data || []).map((log) => ({ ...log, log_type: 'approval', event_time: log.timestamp }));
+    const allocationLogs = (allocationLogsResult.data || []).map((log) => ({ ...log, log_type: 'allocation', event_time: log.created_at }));
+    const combinedLogs = [...approvalLogs, ...allocationLogs]
+      .sort((left, right) => new Date(right.event_time).getTime() - new Date(left.event_time).getTime())
+      .slice(0, 200);
+
+    const actorIds = Array.from(new Set(combinedLogs.map((log) => log.actor_id).filter(Boolean)));
+    const requestIds = Array.from(new Set(combinedLogs.map((log) => log.request_id).filter(Boolean)));
+
+    const { data: actors } = actorIds.length
+      ? await supabase.from('users').select('id, name, role').in('id', actorIds)
+      : { data: [] };
+    const { data: requests } = requestIds.length
+      ? await supabase.from('expense_requests').select('id, request_code, item_name, status').in('id', requestIds)
+      : { data: [] };
+
+    const actorMap = new Map((actors || []).map((actor) => [actor.id, actor]));
+    const requestMap = new Map((requests || []).map((request) => [request.id, request]));
+
+    res.json(combinedLogs.map((log) => ({
+      ...log,
+      actor_name: actorMap.get(log.actor_id)?.name || 'System',
+      actor_role: actorMap.get(log.actor_id)?.role || '',
+      request_code: requestMap.get(log.request_id)?.request_code || '',
+      item_name: requestMap.get(log.request_id)?.item_name || '',
+      request_status: requestMap.get(log.request_id)?.status || ''
+    })));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1951,52 +2063,6 @@ app.patch('/api/requests/:id/resubmit', authenticate, authorize(['employee']), a
     });
 
     res.json(data);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/requests/audit-logs', authenticate, async (req, res) => {
-  try {
-    if (req.user.role !== 'super_admin') {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-
-    const [approvalLogsResult, allocationLogsResult] = await Promise.all([
-      supabase.from('approval_logs').select('*').order('timestamp', { ascending: false }).limit(150),
-      supabase.from('allocation_logs').select('*').order('created_at', { ascending: false }).limit(150)
-    ]);
-
-    if (approvalLogsResult.error) return res.status(400).json({ error: approvalLogsResult.error });
-    if (allocationLogsResult.error) return res.status(400).json({ error: allocationLogsResult.error });
-
-    const approvalLogs = (approvalLogsResult.data || []).map((log) => ({ ...log, log_type: 'approval', event_time: log.timestamp }));
-    const allocationLogs = (allocationLogsResult.data || []).map((log) => ({ ...log, log_type: 'allocation', event_time: log.created_at }));
-    const combinedLogs = [...approvalLogs, ...allocationLogs]
-      .sort((left, right) => new Date(right.event_time).getTime() - new Date(left.event_time).getTime())
-      .slice(0, 200);
-
-    const actorIds = Array.from(new Set(combinedLogs.map((log) => log.actor_id).filter(Boolean)));
-    const requestIds = Array.from(new Set(combinedLogs.map((log) => log.request_id).filter(Boolean)));
-
-    const { data: actors } = actorIds.length
-      ? await supabase.from('users').select('id, name, role').in('id', actorIds)
-      : { data: [] };
-    const { data: requests } = requestIds.length
-      ? await supabase.from('expense_requests').select('id, request_code, item_name, status').in('id', requestIds)
-      : { data: [] };
-
-    const actorMap = new Map((actors || []).map((actor) => [actor.id, actor]));
-    const requestMap = new Map((requests || []).map((request) => [request.id, request]));
-
-    res.json(combinedLogs.map((log) => ({
-      ...log,
-      actor_name: actorMap.get(log.actor_id)?.name || 'System',
-      actor_role: actorMap.get(log.actor_id)?.role || '',
-      request_code: requestMap.get(log.request_id)?.request_code || '',
-      item_name: requestMap.get(log.request_id)?.item_name || '',
-      request_status: requestMap.get(log.request_id)?.status || ''
-    })));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
