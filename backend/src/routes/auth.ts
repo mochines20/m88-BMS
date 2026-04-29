@@ -601,7 +601,8 @@ router.patch('/users/:id', authenticate, async (req: any, res) => {
     return res.status(400).json({ error: 'Name and role are required.' });
   }
 
-  if (!['employee', 'supervisor', 'accounting', 'admin', 'super_admin'].includes(normalizedRole)) {
+  if (!['employee', 'supervisor', 'accounting', 'management', 'admin', 'super_admin'].includes(normalizedRole)) {
+    console.log('Role validation failed for:', normalizedRole);
     return res.status(400).json({ error: 'Invalid role.' });
   }
 
@@ -611,12 +612,12 @@ router.patch('/users/:id', authenticate, async (req: any, res) => {
     updated_at: new Date().toISOString()
   };
 
-  if (normalizedDepartmentId) {
+  if (normalizedDepartmentId && normalizedDepartmentId !== 'null' && normalizedDepartmentId !== '') {
     payload.department_id = normalizedDepartmentId;
-  } else if (normalizedRole !== 'super_admin') {
-    return res.status(400).json({ error: 'Department is required for this role.' });
-  } else {
+  } else if (normalizedRole === 'super_admin' || normalizedRole === 'management') {
     payload.department_id = null;
+  } else {
+    return res.status(400).json({ error: 'Department is required for this role.' });
   }
 
   const { data, error } = await supabase

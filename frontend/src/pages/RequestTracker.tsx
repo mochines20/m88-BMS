@@ -1,19 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
-
-const formatMoney = (value: number) =>
-  new Intl.NumberFormat('en-PH', {
-    style: 'currency',
-    currency: 'PHP',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(Number.isFinite(value) ? value : 0);
-
-const toNumber = (value: unknown) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-};
+import { supabase } from '../lib/supabase';
+import FilePreviewer from '../components/FilePreviewer';
+import { formatMoney, toNumber } from '../utils/format';
 
 const getStatusLabel = (status: string) => {
   switch (status) {
@@ -80,6 +70,9 @@ const RequestTracker = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState<'date' | 'amount'>('date');
+  const [dateStart, setDateStart] = useState('');
+  const [dateEnd, setDateEnd] = useState('');
+  const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
 
   const filteredRequests = useMemo(() => {
     let filtered = [...requests];
@@ -98,6 +91,16 @@ const RequestTracker = () => {
       filtered = filtered.filter(req => req.status === statusFilter);
     }
 
+    if (dateStart) {
+      const start = new Date(dateStart).getTime();
+      filtered = filtered.filter(req => new Date(req.submitted_at).getTime() >= start);
+    }
+
+    if (dateEnd) {
+      const end = new Date(dateEnd).getTime() + 86400000; // End of day
+      filtered = filtered.filter(req => new Date(req.submitted_at).getTime() < end);
+    }
+
     filtered.sort((a, b) => {
       if (sortBy === 'date') {
         return new Date(b.submitted_at || 0).getTime() - new Date(a.submitted_at || 0).getTime();
@@ -106,34 +109,87 @@ const RequestTracker = () => {
     });
 
     return filtered;
-  }, [requests, searchQuery, statusFilter, sortBy]);
+  }, [requests, searchQuery, statusFilter, sortBy, dateStart, dateEnd]);
 
-  useEffect(() => {
-    fetchRequests();
-    const intervalId = window.setInterval(() => {
-      fetchRequests(false);
-    }, 5000);
+  const exportToCSV = () => {
+    const headers = ['Request Code', 'Item Name', 'Category', 'Amount', 'Status', 'Submitted At', 'Priority'];
+    const rows = filteredRequests.map(req => [
+      req.request_code,
+      req.item_name,
+      req.category,
+      req.amount,
+      req.status,
+      new Date(req.submitted_at).toLocaleString(),
+      req.priority
+    ]);
 
-    return () => window.clearInterval(intervalId);
-  }, []);
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
 
-  const fetchRequests = async (showError = true) => {
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `requests_export_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const fetchRequests = async (showError = true, selectedId?: string) => {
     const token = localStorage.getItem('token');
     try {
       const res = await api.get('/api/requests', { headers: { Authorization: `Bearer ${token}` } });
       setRequests(res.data);
-      if (selectedRequest?.id) {
-        const refreshedSelection = res.data.find((request: any) => request.id === selectedRequest.id);
+      
+      const targetId = selectedId || selectedRequest?.id;
+      if (targetId) {
+        const refreshedSelection = res.data.find((request: any) => request.id === targetId);
         if (refreshedSelection) {
           setSelectedRequest(refreshedSelection);
         }
-      } else if (res.data.length > 0) {
+      } else if (res.data.length > 0 && !selectedRequest) {
         setSelectedRequest(res.data[0]);
       }
     } catch {
       if (showError) toast.error('Failed to fetch requests');
     }
   };
+
+  useEffect(() => {
+    void fetchRequests();
+
+    // Supabase Realtime Subscription
+    let channel: any;
+    if (supabase) {
+      channel = supabase
+        .channel('tracker-changes')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'expense_requests' },
+          () => {
+            void fetchRequests(false);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'approval_logs' },
+          () => {
+            void fetchRequests(false);
+          }
+        )
+        .subscribe();
+    }
+
+    return () => {
+      if (channel && supabase) {
+        void supabase.removeChannel(channel);
+      }
+    };
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -195,31 +251,77 @@ const RequestTracker = () => {
       </div>
 
       <div className="mb-4 panel">
-        <div className="flex flex-wrap gap-3">
-          <div className="flex-1 min-w-[200px]">
-            <input
-              type="text"
-              className="field-input"
-              placeholder="Search by item, code, category..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+          <div className="flex flex-wrap gap-3 flex-1">
+            <div className="min-w-[200px] flex-1">
+              <input
+                type="text"
+                className="field-input"
+                placeholder="Search by item, code, category..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <select className="field-input w-auto" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+              <option value="all">All Status</option>
+              <option value="pending_supervisor">Pending Supervisor</option>
+              <option value="pending_accounting">Pending Accounting</option>
+              <option value="approved">Approved</option>
+              <option value="released">Released</option>
+              <option value="rejected">Rejected</option>
+              <option value="returned_for_revision">Returned</option>
+            </select>
+            <select className="field-input w-auto" value={sortBy} onChange={e => setSortBy(e.target.value as 'date' | 'amount')}>
+              <option value="date">Sort by Date</option>
+              <option value="amount">Sort by Amount</option>
+            </select>
+          </div>
+          <button 
+            onClick={exportToCSV}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Export CSV
+          </button>
+        </div>
+        
+        <div className="flex flex-wrap gap-4 items-center border-t border-[var(--role-border)] pt-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-[var(--role-text)]/60">From:</span>
+            <input 
+              type="date" 
+              className="field-input !py-1.5" 
+              value={dateStart}
+              onChange={e => setDateStart(e.target.value)}
             />
           </div>
-          <select className="field-input w-auto" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="all">All Status</option>
-            <option value="pending_supervisor">Pending Supervisor</option>
-            <option value="pending_accounting">Pending Accounting</option>
-            <option value="approved">Approved</option>
-            <option value="released">Released</option>
-            <option value="rejected">Rejected</option>
-            <option value="returned_for_revision">Returned</option>
-          </select>
-          <select className="field-input w-auto" value={sortBy} onChange={e => setSortBy(e.target.value as 'date' | 'amount')}>
-            <option value="date">Sort by Date</option>
-            <option value="amount">Sort by Amount</option>
-          </select>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-[var(--role-text)]/60">To:</span>
+            <input 
+              type="date" 
+              className="field-input !py-1.5" 
+              value={dateEnd}
+              onChange={e => setDateEnd(e.target.value)}
+            />
+          </div>
+          {(dateStart || dateEnd || searchQuery || statusFilter !== 'all') && (
+            <button 
+              onClick={() => {
+                setDateStart('');
+                setDateEnd('');
+                setSearchQuery('');
+                setStatusFilter('all');
+              }}
+              className="text-sm font-medium text-[var(--role-primary)] hover:underline"
+            >
+              Clear Filters
+            </button>
+          )}
         </div>
-        <p className="mt-2 text-sm text-[var(--role-text)]/60">{filteredRequests.length} of {requests.length} requests</p>
+        
+        <p className="mt-4 text-sm text-[var(--role-text)]/60">{filteredRequests.length} of {requests.length} requests</p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.95fr_1.05fr]">
@@ -331,9 +433,12 @@ const RequestTracker = () => {
                         <p className="font-bold text-[var(--role-text)]">{attachment.file_name}</p>
                         <p className="mt-1 text-sm uppercase tracking-[0.12em] text-[var(--role-text)]/50">{attachment.attachment_type || attachment.attachment_scope}</p>
                       </div>
-                      <a className="btn-secondary" href={attachment.file_url} target="_blank" rel="noreferrer">
-                        Open
-                      </a>
+                      <button 
+                        className="btn-secondary" 
+                        onClick={() => setPreviewFile({ url: attachment.file_url, name: attachment.file_name })}
+                      >
+                        Preview
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -492,6 +597,14 @@ const RequestTracker = () => {
           </div>
         )}
       </div>
+      {previewFile && (
+        <FilePreviewer
+          isOpen={!!previewFile}
+          onClose={() => setPreviewFile(null)}
+          fileUrl={previewFile.url}
+          fileName={previewFile.name}
+        />
+      )}
     </div>
   );
 };

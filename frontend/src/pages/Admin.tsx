@@ -2,31 +2,17 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
 import Modal from '../components/Modal';
+import { 
+  formatMoney, 
+  formatDateTime, 
+  formatPercent, 
+  toNumber 
+} from '../utils/format';
 
 const DEFAULT_FX_RATE = 56.0;
 const FX_ENDPOINT = 'https://api.frankfurter.dev/v1/latest?base=USD&symbols=PHP';
 
-const formatMoney = (value: number, currency: 'PHP' | 'USD' = 'PHP') =>
-  new Intl.NumberFormat('en-PH', {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(Number.isFinite(value) ? value : 0);
-
-const formatPercent = (value: number) => `${(Number.isFinite(value) ? value : 0).toFixed(2)}%`;
-
-const formatDateTime = (value?: string) => {
-  if (!value) return 'No timestamp';
-  return new Date(value).toLocaleString();
-};
-
 const toUsd = (amount: number, fxRate: number) => amount / (fxRate || DEFAULT_FX_RATE);
-
-const toNumber = (value: unknown) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-};
 
 const getBudgetHealth = (department: any) => {
   const annualBudget = toNumber(department?.annual_budget);
@@ -118,7 +104,14 @@ const getErrorMessage = (err: any, fallback: string) => {
 const Admin = () => {
   const [departments, setDepartments] = useState<any[]>([]);
   const [managedUsers, setManagedUsers] = useState<any[]>([]);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [userPage, setUserPage] = useState(1);
+  const usersPerPage = 5;
+
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [auditLogSearchQuery, setAuditLogSearchQuery] = useState('');
+  const [auditLogPage, setAuditLogPage] = useState(1);
+  const logsPerPage = 5;
   const [systemHealth, setSystemHealth] = useState<any>(null);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('');
   const [selectedBreakdown, setSelectedBreakdown] = useState<any>(null);
@@ -215,6 +208,50 @@ const Admin = () => {
       return matchesYear && matchesName && matchesHealth;
     });
   }, [visibleDepartments, selectedFiscalYear, departmentSearch, budgetHealthFilter]);
+
+  const filteredUsers = useMemo(() => {
+    const query = userSearchQuery.toLowerCase().trim();
+    if (!query) return managedUsers;
+
+    return managedUsers.filter(u =>
+      String(u.name || '').toLowerCase().includes(query) ||
+      String(u.email || '').toLowerCase().includes(query) ||
+      String(u.role || '').toLowerCase().includes(query) ||
+      String(u.department_name || '').toLowerCase().includes(query)
+    );
+  }, [managedUsers, userSearchQuery]);
+
+  const paginatedUsers = useMemo(() => {
+    const start = (userPage - 1) * usersPerPage;
+    return filteredUsers.slice(start, start + usersPerPage);
+  }, [filteredUsers, userPage]);
+
+  const totalUserPages = Math.ceil(filteredUsers.length / usersPerPage);
+
+  const filteredAuditLogs = useMemo(() => {
+    const query = auditLogSearchQuery.toLowerCase().trim();
+    if (!query) return auditLogs;
+
+    return auditLogs.filter(log =>
+      String(log.actor_name || '').toLowerCase().includes(query) ||
+      String(log.request_code || '').toLowerCase().includes(query) ||
+      String(log.item_name || '').toLowerCase().includes(query) ||
+      String(log.action || '').toLowerCase().includes(query) ||
+      String(log.log_type || '').toLowerCase().includes(query) ||
+      String(log.note || '').toLowerCase().includes(query)
+    );
+  }, [auditLogs, auditLogSearchQuery]);
+
+  const paginatedAuditLogs = useMemo(() => {
+    const start = (auditLogPage - 1) * logsPerPage;
+    return filteredAuditLogs.slice(start, start + logsPerPage);
+  }, [filteredAuditLogs, auditLogPage]);
+
+  const totalAuditLogPages = Math.ceil(filteredAuditLogs.length / logsPerPage);
+
+  useEffect(() => {
+    setAuditLogPage((currentPage) => Math.max(1, Math.min(currentPage, totalAuditLogPages || 1)));
+  }, [totalAuditLogPages]);
 
   useEffect(() => {
     if (!availableFiscalYears.length) return;
@@ -541,6 +578,22 @@ const Admin = () => {
     }
   };
 
+  const groupedDepartments = useMemo(() => {
+    const groups: Record<number, any[]> = {};
+    departments.forEach(dept => {
+      const year = dept.fiscal_year;
+      if (!groups[year]) groups[year] = [];
+      groups[year].push(dept);
+    });
+    // Sort years descending
+    return Object.entries(groups)
+      .sort(([yearA], [yearB]) => Number(yearB) - Number(yearA))
+      .map(([year, depts]) => ({
+        year: Number(year),
+        depts: depts.sort((a, b) => a.name.localeCompare(b.name))
+      }));
+  }, [departments]);
+
   const selectedDepartment = filteredVisibleDepartments.find(dept => dept.id === selectedDepartmentId);
   const breakdownDepartment = selectedBreakdown?.department;
   const breakdownTotals = selectedBreakdown?.totals;
@@ -603,155 +656,255 @@ const Admin = () => {
 
   if (user?.role === 'super_admin') {
     return (
-      <div className="text-[var(--role-text)]">
-        <div className="page-header">
-          <h1 className="page-title">Super Admin Console</h1>
-          <p className="page-subtitle">Manage user access and review the latest system audit activity.</p>
-        </div>
-
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <div className="panel !p-5">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--role-text)]/60">System Status</p>
-              <h3 className="mt-3 text-2xl font-bold text-[var(--role-text)]" style={{ color: systemHealth?.backend?.status === 'healthy' ? '#10B981' : '#EF4444' }}>
-                {systemHealth?.backend?.status === 'healthy' ? 'Healthy' : 'Degraded'}
-              </h3>
-              <p className="mt-1 text-xs text-[var(--role-text)]/70">Server Uptime: {Math.floor((systemHealth?.backend?.uptime || 0) / 3600)}h {Math.floor(((systemHealth?.backend?.uptime || 0) % 3600) / 60)}m</p>
-            </div>
-            <div className="panel !p-5">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--role-text)]/60">Database</p>
-              <h3 className="mt-3 text-2xl font-bold text-[var(--role-text)]" style={{ color: systemHealth?.supabase?.status === 'healthy' ? '#10B981' : '#EF4444' }}>
-                {systemHealth?.supabase?.status === 'healthy' ? 'Connected' : 'Error'}
-              </h3>
-              <p className="mt-1 text-xs text-[var(--role-text)]/70">{systemHealth?.supabase?.error || 'All systems operational'}</p>
-            </div>
-            <div className="panel !p-5">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--role-text)]/60">Total Users</p>
-              <h3 className="mt-3 text-2xl font-bold text-[var(--role-text)]">{systemHealth?.counts?.users || 0}</h3>
-              <p className="mt-1 text-xs text-[var(--role-text)]/70">Registered accounts</p>
-            </div>
-            <div className="panel !p-5">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--role-text)]/60">Active Depts</p>
-              <h3 className="mt-3 text-2xl font-bold text-[var(--role-text)]">{systemHealth?.counts?.departments || 0}</h3>
-              <p className="mt-1 text-xs text-[var(--role-text)]/70">Fiscal departments</p>
-            </div>
+      <>
+        <div className="text-[var(--role-text)]">
+          <div className="page-header">
+            <h1 className="page-title">Super Admin Console</h1>
+            <p className="page-subtitle">Manage user access and review the latest system audit activity.</p>
           </div>
 
-          <div className="panel">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-2xl font-bold text-[var(--role-text)]">User Management</h2>
-                <p className="mt-2 text-[var(--role-text)]/70">Update names, roles, and department assignments from one place.</p>
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+              <div className="panel !p-5">
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--role-text)]/60">System Status</p>
+                <h3 className="mt-3 text-2xl font-bold text-[var(--role-text)]" style={{ color: systemHealth?.backend?.status === 'healthy' ? '#10B981' : '#EF4444' }}>
+                  {systemHealth?.backend?.status === 'healthy' ? 'Healthy' : 'Degraded'}
+                </h3>
+                <p className="mt-1 text-xs text-[var(--role-text)]/70">Server Uptime: {Math.floor((systemHealth?.backend?.uptime || 0) / 3600)}h {Math.floor(((systemHealth?.backend?.uptime || 0) % 3600) / 60)}m</p>
               </div>
-              <button className="btn-secondary" onClick={() => void fetchManagedUsers()}>Refresh Users</button>
+              <div className="panel !p-5">
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--role-text)]/60">Database</p>
+                <h3 className="mt-3 text-2xl font-bold text-[var(--role-text)]" style={{ color: systemHealth?.supabase?.status === 'healthy' ? '#10B981' : '#EF4444' }}>
+                  {systemHealth?.supabase?.status === 'healthy' ? 'Connected' : 'Error'}
+                </h3>
+                <p className="mt-1 text-xs text-[var(--role-text)]/70">{systemHealth?.supabase?.error || 'All systems operational'}</p>
+              </div>
+              <div className="panel !p-5">
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--role-text)]/60">Total Users</p>
+                <h3 className="mt-3 text-2xl font-bold text-[var(--role-text)]">{systemHealth?.counts?.users || 0}</h3>
+                <p className="mt-1 text-xs text-[var(--role-text)]/70">Registered accounts</p>
+              </div>
+              <div className="panel !p-5">
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--role-text)]/60">Active Depts</p>
+                <h3 className="mt-3 text-2xl font-bold text-[var(--role-text)]">{systemHealth?.counts?.departments || 0}</h3>
+                <p className="mt-1 text-xs text-[var(--role-text)]/70">Fiscal departments</p>
+              </div>
             </div>
 
-            <div className="mt-5 space-y-4">
-              {managedUsers.map((managedUser) => (
-                <div key={managedUser.id} className="rounded-[24px] border border-[var(--role-border)] bg-[var(--role-accent)] p-4">
-                  <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.1fr)_220px_260px_140px_120px]">
+            <div className="panel">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold text-[var(--role-text)]">User Management</h2>
+                  <p className="mt-2 text-[var(--role-text)]/70">Update names, roles, and department assignments from one place.</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="relative flex-1 sm:w-64">
                     <input
-                      className="field-input"
-                      value={managedUser.name || ''}
-                      onChange={(e) => setManagedUsers((current) => current.map((entry) => entry.id === managedUser.id ? { ...entry, name: e.target.value } : entry))}
+                      type="text"
+                      placeholder="Search users..."
+                      className="field-input !pl-10"
+                      value={userSearchQuery}
+                      onChange={(e) => {
+                        setUserSearchQuery(e.target.value);
+                        setUserPage(1);
+                      }}
                     />
-                    <select
-                      className="field-input"
-                      value={managedUser.role || 'employee'}
-                      onChange={(e) => setManagedUsers((current) => current.map((entry) => entry.id === managedUser.id ? { ...entry, role: e.target.value } : entry))}
-                    >
-                      <option value="employee">Employee</option>
-                      <option value="supervisor">Supervisor</option>
-                      <option value="accounting">Accounting</option>
-                      <option value="admin">Admin</option>
-                      <option value="super_admin">Super Admin</option>
-                    </select>
-                    <select
-                      className="field-input"
-                      value={managedUser.department_id || ''}
-                      onChange={(e) => setManagedUsers((current) => current.map((entry) => entry.id === managedUser.id ? { ...entry, department_id: e.target.value } : entry))}
-                      disabled={managedUser.role === 'super_admin'}
-                    >
-                      <option value="">No Department</option>
-                      {departments.map((department) => (
-                        <option key={department.id} value={department.id}>
-                          {department.name} - FY {department.fiscal_year}
-                        </option>
-                      ))}
-                    </select>
+                    <svg className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--role-text)]/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
+                  <button className="btn-secondary" onClick={() => void fetchManagedUsers()}>Refresh</button>
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-4">
+                {paginatedUsers.map((managedUser) => (
+                  <div key={managedUser.id} className="rounded-[24px] border border-[var(--role-border)] bg-[var(--role-accent)] p-4 transition-all hover:border-[var(--role-secondary)]/30">
+                    <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.1fr)_220px_260px_140px_120px]">
+                      <input
+                        className="field-input"
+                        value={managedUser.name || ''}
+                        onChange={(e) => setManagedUsers((current) => current.map((entry) => entry.id === managedUser.id ? { ...entry, name: e.target.value } : entry))}
+                      />
+                      <select
+                        className="field-input"
+                        value={managedUser.role || 'employee'}
+                        onChange={(e) => setManagedUsers((current) => current.map((entry) => entry.id === managedUser.id ? { ...entry, role: e.target.value } : entry))}
+                      >
+                        <option value="employee">Employee</option>
+                        <option value="supervisor">Supervisor</option>
+                        <option value="accounting">Accounting</option>
+                        <option value="management">Management</option>
+                        <option value="admin">Admin</option>
+                        <option value="super_admin">Super Admin</option>
+                      </select>
+                      <select
+                        className="field-input border-[var(--role-primary)]/30 focus:border-[var(--role-primary)] font-medium"
+                        value={managedUser.department_id || ''}
+                        onChange={(e) => setManagedUsers((current) => current.map((entry) => entry.id === managedUser.id ? { ...entry, department_id: e.target.value } : entry))}
+                        disabled={managedUser.role === 'super_admin'}
+                      >
+                        <option value="">No Department</option>
+                        {groupedDepartments.map((group) => (
+                          <optgroup key={group.year} label={`Fiscal Year ${group.year}`} className="font-bold text-[var(--role-primary)]">
+                            {group.depts.map((department) => (
+                              <option key={department.id} value={department.id} className="font-normal text-[var(--role-text)]">
+                                {department.name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                      <button
+                        className="btn-primary"
+                        onClick={() => void updateManagedUser(managedUser.id, {
+                          name: managedUser.name || '',
+                          role: managedUser.role || 'employee',
+                          department_id: managedUser.role === 'super_admin' ? '' : (managedUser.department_id || '')
+                        })}
+                      >
+                        Save User
+                      </button>
+                      {managedUser.id !== user.id && (
+                        <button
+                          className="btn-danger"
+                          onClick={() => void deleteManagedUser(managedUser.id, managedUser.email)}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                    <p className="mt-3 text-sm text-[var(--role-text)]/70">
+                      {managedUser.email} • {managedUser.department_name || 'No department'} • Updated {formatDateTime(managedUser.updated_at)}
+                    </p>
+                  </div>
+                ))}
+                {paginatedUsers.length === 0 && (
+                  <div className="panel-muted">
+                    <p className="text-[var(--role-text)]/70">No users found matching your search.</p>
+                  </div>
+                )}
+              </div>
+
+              {totalUserPages > 1 && (
+                <div className="mt-6 flex items-center justify-between border-t border-[var(--role-border)] pt-4">
+                  <p className="text-sm text-[var(--role-text)]/60">
+                    Showing <span className="font-bold text-[var(--role-text)]">{(userPage - 1) * usersPerPage + 1}</span> to <span className="font-bold text-[var(--role-text)]">{Math.min(userPage * usersPerPage, filteredUsers.length)}</span> of <span className="font-bold text-[var(--role-text)]">{filteredUsers.length}</span> users
+                  </p>
+                  <div className="flex gap-2">
                     <button
-                      className="btn-primary"
-                      onClick={() => void updateManagedUser(managedUser.id, {
-                        name: managedUser.name || '',
-                        role: managedUser.role || 'employee',
-                        department_id: managedUser.role === 'super_admin' ? '' : (managedUser.department_id || '')
-                      })}
+                      className="btn-secondary !py-1.5 disabled:opacity-50"
+                      disabled={userPage === 1}
+                      onClick={() => setUserPage(p => p - 1)}
                     >
-                      Save User
+                      Previous
                     </button>
                     <button
-                      className="btn-danger"
-                      onClick={() => void deleteManagedUser(managedUser.id, managedUser.email)}
+                      className="btn-secondary !py-1.5 disabled:opacity-50"
+                      disabled={userPage === totalUserPages}
+                      onClick={() => setUserPage(p => p + 1)}
                     >
-                      Delete
+                      Next
                     </button>
                   </div>
-                  <p className="mt-3 text-sm text-[var(--role-text)]/70">
-                    {managedUser.email} • {managedUser.department_name || 'No department'} • Updated {formatDateTime(managedUser.updated_at)}
-                  </p>
-                </div>
-              ))}
-              {managedUsers.length === 0 && (
-                <div className="panel-muted">
-                  <p className="text-[var(--role-text)]/70">No users found.</p>
                 </div>
               )}
             </div>
-          </div>
 
-          <div className="panel">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-2xl font-bold text-[var(--role-text)]">Audit Logs</h2>
-                <p className="mt-2 text-[var(--role-text)]/70">Latest approval, allocation, and request-audit events across the system.</p>
+            <div className="panel">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold text-[var(--role-text)]">Audit Logs</h2>
+                  <p className="mt-2 text-[var(--role-text)]/70">Latest approval, allocation, and request-audit events across the system.</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="relative flex-1 sm:w-64">
+                    <input
+                      type="text"
+                      placeholder="Search logs..."
+                      className="field-input !pl-10"
+                      value={auditLogSearchQuery}
+                      onChange={(e) => {
+                        setAuditLogSearchQuery(e.target.value);
+                        setAuditLogPage(1);
+                      }}
+                    />
+                    <svg className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--role-text)]/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
+                  <button className="btn-secondary" onClick={() => void fetchAuditLogs()}>Refresh</button>
+                </div>
               </div>
-              <button className="btn-secondary" onClick={() => void fetchAuditLogs()}>Refresh Logs</button>
-            </div>
 
-            <div className="mt-5 space-y-3">
-              {auditLogs.map((log: any, index: number) => (
-                <div key={`${log.log_type}-${log.id || index}`} className="rounded-2xl border border-[var(--role-border)] bg-[var(--role-accent)] p-4">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div>
-                      <p className="font-semibold text-[var(--role-text)] capitalize">
-                        {log.log_type} • {log.action} • {log.request_code || 'No request code'}
-                      </p>
-                      <p className="mt-1 text-sm text-[var(--role-text)]/70">
-                        {log.item_name || 'No item name'} • {log.request_status || 'No status'}
-                      </p>
-                      <p className="mt-2 text-sm text-[var(--role-text)]/80">{log.note || log.new_value || 'No note provided.'}</p>
-                    </div>
-                    <div className="text-sm text-[var(--role-text)]/60 lg:text-right">
-                      <p>{log.actor_name || 'System'}</p>
-                      <p className="capitalize">{log.actor_role || 'system'}</p>
-                      <p>{formatDateTime(log.event_time || log.created_at || log.timestamp)}</p>
+              <div className="mt-5 space-y-3">
+                {paginatedAuditLogs.map((log: any, index: number) => (
+                  <div key={`${log.log_type}-${log.id || index}`} className="rounded-2xl border border-[var(--role-border)] bg-[var(--role-accent)] p-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="font-semibold text-[var(--role-text)] capitalize">
+                          {log.log_type} • {log.action} • {log.request_code || 'No request code'}
+                        </p>
+                        <p className="mt-1 text-sm text-[var(--role-text)]/70">
+                          {log.item_name || 'No item name'} • {log.request_status || 'No status'}
+                        </p>
+                        <p className="mt-2 text-sm text-[var(--role-text)]/80">{log.note || log.new_value || 'No note provided.'}</p>
+                      </div>
+                      <div className="text-sm text-[var(--role-text)]/60 lg:text-right">
+                        <p>{log.actor_name || 'System'}</p>
+                        <p className="capitalize">{log.actor_role || 'system'}</p>
+                        <p>{formatDateTime(log.event_time || log.created_at || log.timestamp)}</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-              {auditLogs.length === 0 && (
-                <div className="panel-muted">
-                  <p className="text-[var(--role-text)]/70">No audit logs available yet.</p>
+                ))}
+                {paginatedAuditLogs.length === 0 && (
+                  <div className="panel-muted">
+                    <p className="text-[var(--role-text)]/70">No audit logs available yet.</p>
+                  </div>
+                )}
+              </div>
+
+              {totalAuditLogPages > 1 && (
+                <div className="mt-6 flex items-center justify-between border-t border-[var(--role-border)] pt-4">
+                  <p className="text-sm text-[var(--role-text)]/60">
+                    Showing <span className="font-bold text-[var(--role-text)]">{(auditLogPage - 1) * logsPerPage + 1}</span> to <span className="font-bold text-[var(--role-text)]">{Math.min(auditLogPage * logsPerPage, filteredAuditLogs.length)}</span> of <span className="font-bold text-[var(--role-text)]">{filteredAuditLogs.length}</span> logs
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      className="btn-secondary !py-1.5 disabled:opacity-50"
+                      disabled={auditLogPage === 1}
+                      onClick={() => setAuditLogPage(p => p - 1)}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      className="btn-secondary !py-1.5 disabled:opacity-50"
+                      disabled={auditLogPage === totalAuditLogPages}
+                      onClick={() => setAuditLogPage(p => p + 1)}
+                    >
+                      Next
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
           </div>
         </div>
-      </div>
+        <Modal
+          isOpen={modalConfig.isOpen}
+          title={modalConfig.title}
+          message={modalConfig.message}
+          type={modalConfig.type}
+          onClose={() => setModalConfig(prev => ({ ...prev, isOpen: false }))}
+          onConfirm={modalConfig.onConfirm}
+          confirmLabel={modalConfig.type === 'confirm' ? 'Delete Account' : 'Confirm'}
+        />
+      </>
     );
   }
 
-  return (
+return (
     <div className="text-[var(--role-text)]">
       <div className="page-header">
         <div className="flex flex-col gap-6">

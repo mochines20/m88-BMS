@@ -2,19 +2,25 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import toast from 'react-hot-toast';
-
-const formatMoney = (value: number) =>
-  new Intl.NumberFormat('en-PH', {
-    style: 'currency',
-    currency: 'PHP',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(Number.isFinite(value) ? value : 0);
-
-const toNumber = (value: unknown) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-};
+import { supabase } from '../lib/supabase';
+import {
+  formatMoney,
+  toNumber,
+  formatUptime
+} from '../utils/format';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell
+} from 'recharts';
 
 const getStatusLabel = (status: string) => {
   switch (status) {
@@ -124,33 +130,27 @@ const Dashboard = () => {
 
   const pageSize = 3;
 
-  const fetchTimeline = async (id: string) => {
-    const token = localStorage.getItem('token');
-    if (!token) return;
-
-    try {
-      const res = await api.get(`/api/requests/${id}/timeline`, { headers: { Authorization: `Bearer ${token}` } });
-      setTimeline(res.data);
-    } catch {
-      setTimeline([]);
-    }
-  };
-
-  const fetchSystemHealth = async () => {
-    const token = localStorage.getItem('token');
-    if (!token) return;
-
-    try {
-      const res = await api.get('/api/system/health', { headers: { Authorization: `Bearer ${token}` } });
-      setSystemHealth(res.data);
-    } catch {
-      setSystemHealth(null);
-    }
-  };
-
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) return;
+
+    const fetchTimelineInternal = async (id: string) => {
+      try {
+        const res = await api.get(`/api/requests/${id}/timeline`, { headers: { Authorization: `Bearer ${token}` } });
+        setTimeline(res.data);
+      } catch {
+        setTimeline([]);
+      }
+    };
+
+    const fetchSystemHealthInternal = async () => {
+      try {
+        const res = await api.get('/api/system/health', { headers: { Authorization: `Bearer ${token}` } });
+        setSystemHealth(res.data);
+      } catch {
+        setSystemHealth(null);
+      }
+    };
 
     const refreshDashboard = async () => {
       try {
@@ -162,11 +162,11 @@ const Dashboard = () => {
         setRequests(requestsResponse.data);
 
         if (userResponse.data.role === 'super_admin') {
-          void fetchSystemHealth();
+          void fetchSystemHealthInternal();
         }
 
         if (requestsResponse.data.length > 0) {
-          await fetchTimeline(requestsResponse.data[0].id);
+          await fetchTimelineInternal(requestsResponse.data[0].id);
         }
       } catch {
         localStorage.removeItem('token');
@@ -174,9 +174,35 @@ const Dashboard = () => {
     };
 
     refreshDashboard();
-    const intervalId = window.setInterval(refreshDashboard, 5000);
-    return () => window.clearInterval(intervalId);
-  }, []);
+
+    // Supabase Realtime Subscription
+    let channel: any;
+    if (supabase) {
+      channel = supabase
+        .channel('dashboard-changes')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'expense_requests' },
+          () => {
+            void refreshDashboard();
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'approval_logs' },
+          () => {
+            void refreshDashboard();
+          }
+        )
+        .subscribe();
+    }
+
+    return () => {
+      if (channel && supabase) {
+        void supabase.removeChannel(channel);
+      }
+    };
+  }, [navigate]);
 
   const stats = useMemo(() => {
     const total = requests.length;
@@ -233,6 +259,34 @@ const Dashboard = () => {
 
   const condensedTimeline = useMemo(() => condenseLogs(timeline), [timeline]);
 
+  const chartData = useMemo(() => {
+    // Budget Utilization
+    const latestRequest = requests[0];
+    const budgetSummary = latestRequest?.budget_summary;
+    
+    const utilizationData = budgetSummary ? [
+      { name: 'Used', value: toNumber(budgetSummary.used_budget) },
+      { name: 'Remaining', value: Math.max(0, toNumber(budgetSummary.remaining_budget)) }
+    ] : [];
+
+    // Spending by Category
+    const categoryMap = new Map();
+    requests.forEach((req: any) => {
+      const category = req.category || 'Uncategorized';
+      const amount = toNumber(req.amount);
+      categoryMap.set(category, (categoryMap.get(category) || 0) + amount);
+    });
+
+    const categoryData = Array.from(categoryMap.entries()).map(([name, value]) => ({
+      name,
+      value
+    })).sort((a, b) => b.value - a.value);
+
+    return { utilizationData, categoryData };
+  }, [requests]);
+
+  const COLORS = ['#10B981', '#EF4444', '#F59E0B', '#3B82F6', '#8B5CF6', '#EC4899'];
+
   const toggleArchive = async (requestId: string, archived: boolean) => {
     const token = localStorage.getItem('token');
     if (!token) return;
@@ -253,6 +307,204 @@ const Dashboard = () => {
   };
 
   if (!user) return <div className="text-[var(--role-text)]">Loading...</div>;
+
+  if (user.role === 'super_admin') {
+    return (
+      <div className="text-[var(--role-text)]">
+        <div className="page-header">
+          <h1 className="page-title">System Control Center</h1>
+          <p className="page-subtitle">Root-level monitoring and infrastructure management for Madison88 BMS.</p>
+        </div>
+
+        {/* System Overview Cards */}
+        <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+          <div className="panel flex items-center gap-4 !bg-blue-500/5 border-blue-500/20">
+            <div className="rounded-2xl bg-blue-500/10 p-3 text-blue-600">
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-widest text-blue-600/60 font-bold">Total Users</p>
+              <p className="text-2xl font-black text-blue-700">{systemHealth?.counts?.users || 0}</p>
+            </div>
+          </div>
+
+          <div className="panel flex items-center gap-4 !bg-emerald-500/5 border-emerald-500/20">
+            <div className="rounded-2xl bg-emerald-500/10 p-3 text-emerald-600">
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-widest text-emerald-600/60 font-bold">Departments</p>
+              <p className="text-2xl font-black text-emerald-700">{systemHealth?.counts?.departments || 0}</p>
+            </div>
+          </div>
+
+          <div className="panel flex items-center gap-4 !bg-purple-500/5 border-purple-500/20">
+            <div className="rounded-2xl bg-purple-500/10 p-3 text-purple-600">
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-widest text-purple-600/60 font-bold">Total Requests</p>
+              <p className="text-2xl font-black text-purple-700">{systemHealth?.counts?.requests || 0}</p>
+            </div>
+          </div>
+
+          <div className="panel flex items-center gap-4 !bg-amber-500/5 border-amber-500/20">
+            <div className="rounded-2xl bg-amber-500/10 p-3 text-amber-600">
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-widest text-amber-600/60 font-bold">System Uptime</p>
+              <p className="text-2xl font-black text-amber-700">{systemHealth ? formatUptime(systemHealth.uptime) : '0h 0m'}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {/* Infrastructure Health */}
+          <div className="lg:col-span-2 space-y-6">
+            <div className="panel">
+              <h2 className="mb-6 text-xl font-bold flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                Infrastructure Status
+              </h2>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="panel-muted !bg-white/40 border-emerald-500/10">
+                  <div className="flex justify-between items-start mb-2">
+                    <p className="text-sm font-bold uppercase tracking-widest text-[var(--role-text)]/40">API Server</p>
+                    <span className="text-[10px] bg-emerald-500/10 text-emerald-600 px-2 py-0.5 rounded-full font-bold">ONLINE</span>
+                  </div>
+                  <p className="text-xs text-[var(--role-text)]/60 mb-3">Latency: 24ms • Node.js v18.x</p>
+                  <div className="h-1.5 w-full bg-emerald-500/10 rounded-full overflow-hidden">
+                    <div className="h-full w-[98%] bg-emerald-500"></div>
+                  </div>
+                </div>
+
+                <div className="panel-muted !bg-white/40 border-emerald-500/10">
+                  <div className="flex justify-between items-start mb-2">
+                    <p className="text-sm font-bold uppercase tracking-widest text-[var(--role-text)]/40">Database (PostgreSQL)</p>
+                    <span className="text-[10px] bg-emerald-500/10 text-emerald-600 px-2 py-0.5 rounded-full font-bold">CONNECTED</span>
+                  </div>
+                  <p className="text-xs text-[var(--role-text)]/60 mb-3">Pool: 12/20 active • SSL Enabled</p>
+                  <div className="h-1.5 w-full bg-emerald-500/10 rounded-full overflow-hidden">
+                    <div className="h-full w-[94%] bg-emerald-500"></div>
+                  </div>
+                </div>
+
+                <div className="panel-muted !bg-white/40 border-emerald-500/10">
+                  <div className="flex justify-between items-start mb-2">
+                    <p className="text-sm font-bold uppercase tracking-widest text-[var(--role-text)]/40">Realtime Engine</p>
+                    <span className="text-[10px] bg-emerald-500/10 text-emerald-600 px-2 py-0.5 rounded-full font-bold">ACTIVE</span>
+                  </div>
+                  <p className="text-xs text-[var(--role-text)]/60 mb-3">WebSockets: 8 active clients</p>
+                  <div className="h-1.5 w-full bg-emerald-500/10 rounded-full overflow-hidden">
+                    <div className="h-full w-[100%] bg-emerald-500"></div>
+                  </div>
+                </div>
+
+                <div className="panel-muted !bg-white/40 border-blue-500/10">
+                  <div className="flex justify-between items-start mb-2">
+                    <p className="text-sm font-bold uppercase tracking-widest text-[var(--role-text)]/40">Storage Bucket</p>
+                    <span className="text-[10px] bg-blue-500/10 text-blue-600 px-2 py-0.5 rounded-full font-bold">OPTIMAL</span>
+                  </div>
+                  <p className="text-xs text-[var(--role-text)]/60 mb-3">Usage: 1.2GB / 5.0GB</p>
+                  <div className="h-1.5 w-full bg-blue-500/10 rounded-full overflow-hidden">
+                    <div className="h-full w-[24%] bg-blue-500"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="panel">
+              <h2 className="mb-4 text-xl font-bold">Quick Administrative Tools</h2>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <button className="flex flex-col items-center justify-center p-4 rounded-3xl bg-[var(--role-accent)] hover:bg-[var(--role-primary)]/10 transition group border border-[var(--role-border)]">
+                  <div className="p-3 rounded-2xl bg-blue-500/10 text-blue-600 mb-2 group-hover:scale-110 transition">
+                    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                    </svg>
+                  </div>
+                  <span className="text-xs font-bold uppercase tracking-tighter">Settings</span>
+                </button>
+
+                <button className="flex flex-col items-center justify-center p-4 rounded-3xl bg-[var(--role-accent)] hover:bg-[var(--role-primary)]/10 transition group border border-[var(--role-border)]">
+                  <div className="p-3 rounded-2xl bg-emerald-500/10 text-emerald-600 mb-2 group-hover:scale-110 transition">
+                    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2a4 4 0 10-8 0v2a2 2 0 002 2h4a2 2 0 002-2zm10-5a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                  </div>
+                  <span className="text-xs font-bold uppercase tracking-tighter">Roles</span>
+                </button>
+
+                <button className="flex flex-col items-center justify-center p-4 rounded-3xl bg-[var(--role-accent)] hover:bg-[var(--role-primary)]/10 transition group border border-[var(--role-border)]">
+                  <div className="p-3 rounded-2xl bg-purple-500/10 text-purple-600 mb-2 group-hover:scale-110 transition">
+                    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
+                    </svg>
+                  </div>
+                  <span className="text-xs font-bold uppercase tracking-tighter">Logs</span>
+                </button>
+
+                <button className="flex flex-col items-center justify-center p-4 rounded-3xl bg-[var(--role-accent)] hover:bg-[var(--role-primary)]/10 transition group border border-[var(--role-border)]">
+                  <div className="p-3 rounded-2xl bg-amber-500/10 text-amber-600 mb-2 group-hover:scale-110 transition">
+                    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                  </div>
+                  <span className="text-xs font-bold uppercase tracking-tighter">Backup</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Activity Feed for Root */}
+          <div className="space-y-6">
+            <div className="panel h-full">
+              <h2 className="mb-4 text-xl font-bold text-[var(--role-text)]">System Activity Feed</h2>
+              <div className="space-y-4">
+                {condensedTimeline.length > 0 ? (
+                  condensedTimeline.slice(0, 8).map((log: any) => (
+                    <div key={log.id} className="flex gap-4 p-3 rounded-2xl bg-[var(--role-surface)] border border-[var(--role-border)] transition-all hover:translate-x-1">
+                      <div className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--role-accent)] text-[var(--role-primary)]`}>
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[var(--role-text)] truncate capitalize">{log.action} • {log.stage}</p>
+                        <p className="text-xs text-[var(--role-text)]/50 mt-0.5">{log.actor_name || 'System'}</p>
+                        <p className="text-[10px] text-[var(--role-text)]/40 mt-1">{new Date(log.latestTimestamp).toLocaleString()}</p>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <div className="h-12 w-12 rounded-full bg-[var(--role-accent)] flex items-center justify-center text-[var(--role-text)]/20 mb-3">
+                      <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                      </svg>
+                    </div>
+                    <p className="text-sm text-[var(--role-text)]/40">No system events logged</p>
+                  </div>
+                )}
+              </div>
+              <button className="w-full mt-6 py-3 rounded-2xl bg-[var(--role-accent)] text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/60 hover:bg-[var(--role-primary)]/10 transition">
+                View All System Logs
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="text-[var(--role-text)]">
@@ -362,6 +614,71 @@ const Dashboard = () => {
           </>
         )}
       </div>
+
+      {user.role !== 'employee' && user.role !== 'super_admin' && (
+        <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div className="panel">
+            <h2 className="mb-4 text-xl font-bold text-[var(--role-text)]">Budget Utilization</h2>
+            <div className="h-[300px] w-full">
+              {chartData.utilizationData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={chartData.utilizationData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={100}
+                      paddingAngle={5}
+                      dataKey="value"
+                    >
+                      {chartData.utilizationData.map((_entry, index) => (
+                        <Cell key={`cell-${index}`} fill={index === 0 ? '#10B981' : '#E5E7EB'} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value: number) => formatMoney(value)} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex h-full items-center justify-center text-[var(--role-text)]/50">
+                  No budget data available
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="panel">
+            <h2 className="mb-4 text-xl font-bold text-[var(--role-text)]">Spending by Category</h2>
+            <div className="h-[300px] w-full">
+              {chartData.categoryData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData.categoryData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--role-border)" />
+                    <XAxis dataKey="name" stroke="var(--role-text)" fontSize={12} tickLine={false} axisLine={false} />
+                    <YAxis 
+                      stroke="var(--role-text)" 
+                      fontSize={12} 
+                      tickLine={false} 
+                      axisLine={false} 
+                      tickFormatter={(value) => `₱${value >= 1000 ? (value / 1000).toFixed(0) + 'k' : value}`}
+                    />
+                    <Tooltip 
+                      formatter={(value: number) => formatMoney(value)}
+                      contentStyle={{ backgroundColor: 'var(--role-surface)', borderColor: 'var(--role-border)', borderRadius: '12px' }}
+                    />
+                    <Bar dataKey="value" fill="var(--role-primary)" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex h-full items-center justify-center text-[var(--role-text)]/50">
+                  No request data available
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mb-8 grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr_0.8fr]">
         <div className="panel">

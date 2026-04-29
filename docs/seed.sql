@@ -1,4 +1,4 @@
-﻿-- Sample data for Madison88 BMS
+-- Sample data for Madison88 BMS
 -- Run this after the schema is created
 -- Department codes shown in the UI:
 -- IT Department -> m88IT
@@ -68,6 +68,7 @@ WITH user_rows AS (
     ('Jane Supervisor', 'jane.supervisor@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'supervisor', 'IT Department'),
     ('Bob Accounting', 'bob.accounting@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'accounting', 'Finance Department'),
     ('Alice Admin', 'alice.admin@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'admin', 'Admin Department'),
+    ('Management Executive', 'management@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'management', NULL),
     ('Sarah Super Admin', 'sarah.superadmin@madison88.com', '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu', 'super_admin', NULL)
   ) AS v(name, email, password_hash, role, department_name)
 )

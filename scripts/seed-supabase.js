@@ -69,6 +69,13 @@ const users = [
     department_name: 'Admin Department',
   },
   {
+    name: 'Management Executive',
+    email: 'management@madison88.com',
+    password_hash: '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu',
+    role: 'management',
+    department_name: null,
+  },
+  {
     name: 'Sarah Super Admin',
     email: 'sarah.superadmin@madison88.com',
     password_hash: '$2a$10$W8IVGUIhe6SpGriIdUUfnutCGX9uSRe9fcn5TeN9tG0l3HQULh6Wu',

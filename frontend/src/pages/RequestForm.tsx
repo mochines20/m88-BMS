@@ -1,6 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
+import { formatMoney, toNumber } from '../utils/format';
+import { CATEGORY_STRUCTURE, MainCategory, SubCategory } from '../utils/categories';
 
 const RequestForm = () => {
   const [items, setItems] = useState([{ name: '', amount: '' }]);
@@ -10,10 +12,66 @@ const RequestForm = () => {
     priority: 'normal'
   });
   const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [department, setDepartment] = useState<any>(null);
+
+  // Category selection states
+  const [selectedMain, setSelectedMain] = useState<MainCategory | null>(null);
+  const [selectedSub, setSelectedSub] = useState<string | SubCategory | null>(null);
+  const [selectedItem, setSelectedItem] = useState<string>('');
+
+  useEffect(() => {
+    // Construct final category string
+    let finalCategory = '';
+    if (selectedMain) {
+      finalCategory = selectedMain.name;
+      if (selectedSub) {
+        const subName = typeof selectedSub === 'string' ? selectedSub : selectedSub.name;
+        finalCategory += ` > ${subName}`;
+        if (selectedItem) {
+          finalCategory += ` > ${selectedItem}`;
+        }
+      }
+    }
+    setForm(prev => ({ ...prev, category: finalCategory }));
+  }, [selectedMain, selectedSub, selectedItem]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+
+      try {
+        const userRes = await api.get('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } });
+        setUser(userRes.data);
+
+        if (userRes.data.department_id) {
+          const deptRes = await api.get('/api/departments', { headers: { Authorization: `Bearer ${token}` } });
+          const userDept = deptRes.data.find((d: any) => d.id === userRes.data.department_id);
+          setDepartment(userDept);
+        }
+      } catch (err) {
+        console.error('Failed to fetch user/department data', err);
+      }
+    };
+
+    fetchData();
+  }, []);
 
   const totalAmount = useMemo(() => {
     return items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
   }, [items]);
+
+  const budgetImpact = useMemo(() => {
+    if (!department) return null;
+    const currentRemaining = toNumber(department.remaining_budget || (toNumber(department.annual_budget) - toNumber(department.used_budget)));
+    const nextRemaining = currentRemaining - totalAmount;
+    return {
+      currentRemaining,
+      nextRemaining,
+      isOverBudget: nextRemaining < 0
+    };
+  }, [department, totalAmount]);
 
   const addItem = () => {
     setItems([...items, { name: '', amount: '' }]);
@@ -61,6 +119,9 @@ const RequestForm = () => {
       toast.success('Bulk request submitted successfully!');
       setItems([{ name: '', amount: '' }]);
       setForm({ category: '', purpose: '', priority: 'normal' });
+      setSelectedMain(null);
+      setSelectedSub(null);
+      setSelectedItem('');
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Submission failed');
     } finally {
@@ -139,11 +200,77 @@ const RequestForm = () => {
               ))}
             </div>
 
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-              <div>
-                <label className="field-label">Category</label>
-                <input className="field-input" placeholder="e.g. IT Equipment" value={form.category} onChange={e => setForm({...form, category: e.target.value})} required />
+            <div className="space-y-4">
+              <label className="field-label">Category Selection</label>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div>
+                  <select 
+                    className="field-input" 
+                    value={selectedMain?.name || ''} 
+                    onChange={e => {
+                      const main = CATEGORY_STRUCTURE.find(c => c.name === e.target.value) || null;
+                      setSelectedMain(main);
+                      setSelectedSub(null);
+                      setSelectedItem('');
+                    }}
+                    required
+                  >
+                    <option value="">Select Category</option>
+                    {CATEGORY_STRUCTURE.map(main => (
+                      <option key={main.name} value={main.name}>{main.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedMain && selectedMain.subcategories.length > 0 && (
+                  <div>
+                    <select 
+                      className="field-input" 
+                      value={typeof selectedSub === 'string' ? selectedSub : selectedSub?.name || ''} 
+                      onChange={e => {
+                        const sub = selectedMain.subcategories.find(s => 
+                          (typeof s === 'string' ? s : s.name) === e.target.value
+                        ) || null;
+                        setSelectedSub(sub);
+                        setSelectedItem('');
+                      }}
+                      required
+                    >
+                      <option value="">Select Sub-category</option>
+                      {selectedMain.subcategories.map(sub => {
+                        const name = typeof sub === 'string' ? sub : sub.name;
+                        return <option key={name} value={name}>{name}</option>;
+                      })}
+                    </select>
+                  </div>
+                )}
+
+                {selectedSub && typeof selectedSub !== 'string' && selectedSub.items && (
+                  <div>
+                    <select 
+                      className="field-input" 
+                      value={selectedItem} 
+                      onChange={e => setSelectedItem(e.target.value)}
+                      required
+                    >
+                      <option value="">Select Detail</option>
+                      {selectedSub.items.map(item => (
+                        <option key={item} value={item}>{item}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
+              
+              <div className="rounded-xl bg-[var(--role-accent)]/50 p-3 border border-dashed border-[var(--role-secondary)]/20">
+                <p className="text-[10px] uppercase tracking-widest text-[var(--role-text)]/50 font-bold">Current Selection</p>
+                <p className="mt-1 text-sm font-semibold text-[var(--role-secondary)]">
+                  {form.category || 'Please select a category above'}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
               <div>
                 <label className="field-label">Priority</label>
                 <select className="field-input" value={form.priority} onChange={e => setForm({...form, priority: e.target.value})}>
@@ -163,13 +290,35 @@ const RequestForm = () => {
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold text-[var(--role-text)]/70 uppercase tracking-widest">Total Request Amount</span>
                 <span className="text-2xl font-bold text-[var(--role-text)]">
-                  ₱{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {formatMoney(totalAmount)}
                 </span>
               </div>
+              
+              {budgetImpact && (
+                <div className="mt-4 pt-4 border-t border-[var(--role-secondary)]/10 space-y-2">
+                  <div className="flex justify-between text-xs uppercase tracking-wider font-bold">
+                    <span className="text-[var(--role-text)]/50">Dept: {department.name}</span>
+                    <span className={budgetImpact.isOverBudget ? 'text-red-500' : 'text-emerald-500'}>
+                      Remaining After: {formatMoney(budgetImpact.nextRemaining)}
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full bg-[var(--role-border)]/30 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-500 ${budgetImpact.isOverBudget ? 'bg-red-500' : 'bg-emerald-500'}`}
+                      style={{ width: `${Math.max(0, Math.min(100, (budgetImpact.nextRemaining / (toNumber(department.annual_budget) || 1)) * 100))}%` }}
+                    />
+                  </div>
+                  {budgetImpact.isOverBudget && (
+                    <p className="text-[10px] text-red-500 font-bold animate-pulse uppercase tracking-tighter">
+                      ⚠️ Warning: This request exceeds the current department budget.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             <button className="btn-primary w-full py-4 text-lg" type="submit" disabled={loading}>
-              {loading ? 'Submitting Request...' : `Submit Request for ₱${totalAmount.toLocaleString()}`}
+              {loading ? 'Submitting Request...' : `Submit Request for ${formatMoney(totalAmount)}`}
             </button>
           </form>
         </div>

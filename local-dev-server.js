@@ -54,6 +54,35 @@ const LEGACY_TO_CANONICAL_DEPARTMENT = {
   m88admin: 'Admin Department',
   'accounting department': 'Finance Department'
 };
+const sendMockEmail = (to, subject, content) => {
+  console.log('--- MOCK EMAIL SENT ---');
+  console.log(`To: ${to}`);
+  console.log(`Subject: ${subject}`);
+  console.log(`Content: ${content}`);
+  console.log('-----------------------');
+};
+
+const createNotification = async (userId, message, type = 'info') => {
+  try {
+    const { data: user } = await supabase.from('users').select('email, name').eq('id', userId).single();
+    
+    // In-app notification
+    await supabase.from('notifications').insert({
+      user_id: userId,
+      message,
+      type,
+      is_read: false
+    });
+
+    // Mock Email notification
+    if (user?.email) {
+      sendMockEmail(user.email, `BMS Notification: ${message}`, `Hi ${user.name},\n\n${message}\n\nPlease check the Madison88 Budget Management System for details.`);
+    }
+  } catch (error) {
+    console.error('Notification error:', error);
+  }
+};
+
 const isBudgetCommittedStatus = (status) => status === 'released' || status === 'approved';
 const COMPANY_EMAIL_DOMAIN = 'madison88.com';
 const CANONICAL_DEPARTMENTS = [
@@ -1312,6 +1341,19 @@ app.post('/api/requests', authenticate, authorize(['employee']), async (req, res
       note: 'Request submitted'
     });
 
+    // Notify supervisors of the department
+    const { data: supervisors } = await supabase
+      .from('users')
+      .select('id')
+      .eq('department_id', activeDepartment.id)
+      .eq('role', 'supervisor');
+
+    if (supervisors) {
+      for (const supervisor of supervisors) {
+        await createNotification(supervisor.id, `New budget request from ${req.user.name}: ${item_name} (₱${normalizedAmount})`);
+      }
+    }
+
     res.json(data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1849,6 +1891,23 @@ app.patch('/api/requests/:id/approve', authenticate, authorize(['supervisor', 'a
       note: req.body?.note || ''
     });
 
+    // Notifications
+    if (req.user.role === 'supervisor') {
+      // Notify employee
+      await createNotification(request.employee_id, `Your request for ${request.item_name} has been approved by your supervisor and is now being reviewed by Accounting.`);
+      
+      // Notify accounting team
+      const { data: accountingStaff } = await supabase.from('users').select('id').eq('role', 'accounting');
+      if (accountingStaff) {
+        for (const staff of accountingStaff) {
+          await createNotification(staff.id, `New request from ${request.department_name} ready for fund release: ${request.item_name} (₱${request.amount})`);
+        }
+      }
+    } else if (req.user.role === 'accounting') {
+      // Notify employee
+      await createNotification(request.employee_id, `Success! Your budget request for ${request.item_name} has been released.`, 'success');
+    }
+
     res.json(data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1979,6 +2038,9 @@ app.patch('/api/requests/:id/reject', authenticate, authorize(['supervisor', 'ac
       note: String(reason).trim()
     });
 
+    // Notify employee
+    await createNotification(request.employee_id, `Your request for ${request.item_name} was rejected at the ${stage} stage. Reason: ${reason}`, 'error');
+
     res.json(data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -2025,6 +2087,9 @@ app.patch('/api/requests/:id/return', authenticate, authorize(['supervisor', 'ac
       stage,
       note: reason
     });
+
+    // Notify employee
+    await createNotification(request.employee_id, `Your request for ${request.item_name} was returned for revision by ${stage === 'supervisor' ? 'your supervisor' : 'Accounting'}. Reason: ${reason}`, 'warning');
 
     res.json(data);
   } catch (error) {

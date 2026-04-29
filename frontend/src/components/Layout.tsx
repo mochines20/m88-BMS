@@ -2,7 +2,8 @@ import { ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import api from '../api';
-import { Toaster } from 'react-hot-toast';
+import toast, { Toaster } from 'react-hot-toast';
+import { supabase } from '../lib/supabase';
 
 interface LayoutProps {
   children: ReactNode;
@@ -63,15 +64,38 @@ const Layout = ({ children }: LayoutProps) => {
 
       refreshPendingApprovals();
       fetchNotifications();
-      const intervalId = window.setInterval(() => {
-        refreshPendingApprovals();
-        fetchNotifications();
-      }, 10000);
-      return () => window.clearInterval(intervalId);
+
+      // Supabase Realtime Subscription
+      let channel: any;
+      if (supabase) {
+        channel = supabase
+          .channel('layout-changes')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${user?.id}` },
+            () => {
+              void fetchNotifications();
+            }
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'expense_requests' },
+            () => {
+              void refreshPendingApprovals();
+            }
+          )
+          .subscribe();
+      }
+
+      return () => {
+        if (channel) {
+          void supabase?.removeChannel(channel);
+        }
+      };
     } else {
       navigate('/login');
     }
-  }, [navigate]);
+  }, [navigate, user?.id]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -100,6 +124,12 @@ const Layout = ({ children }: LayoutProps) => {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         );
+      case 'management':
+        return (
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+        );
       default:
         return (
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -115,6 +145,7 @@ const Layout = ({ children }: LayoutProps) => {
       case 'employee': return 'Employee Workspace';
       case 'supervisor': return 'Supervisor Portal';
       case 'accounting': return 'Finance Control';
+      case 'management': return 'Management Executive';
       case 'admin': return 'System Admin';
       case 'super_admin': return 'Root Access';
       default: return 'BMS Access';
@@ -221,6 +252,9 @@ const Layout = ({ children }: LayoutProps) => {
               )}
               {user.role !== 'employee' && user.role !== 'super_admin' && (
                 <Link to="/reports" className={getNavClassName('/reports')}>Analytics</Link>
+              )}
+              {(user.role === 'management' || user.role === 'admin' || user.role === 'accounting' || user.role === 'super_admin') && (
+                <Link to="/management" className={getNavClassName('/management')}>Management</Link>
               )}
               {(user.role === 'admin' || user.role === 'accounting' || user.role === 'super_admin') && (
                 <Link to="/admin" className={getNavClassName('/admin')}>

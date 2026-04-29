@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
 import Modal from '../components/Modal';
+import { supabase } from '../lib/supabase';
+import FilePreviewer from '../components/FilePreviewer';
 
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('en-PH', {
@@ -49,6 +51,7 @@ const Approvals = () => {
   const [expandedRequests, setExpandedRequests] = useState<Record<string, boolean>>({});
   const [expandedSplits, setExpandedSplits] = useState<Record<string, boolean>>({});
   const [savingRequestId, setSavingRequestId] = useState('');
+  const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
     requestId: string;
@@ -83,11 +86,33 @@ const Approvals = () => {
   useEffect(() => {
     if (!user?.role) return;
 
-    const intervalId = window.setInterval(() => {
-      fetchRequests(user.role);
-    }, 5000);
+    // Supabase Realtime Subscription
+    let channel: any;
+    if (supabase) {
+      channel = supabase
+        .channel('approvals-changes')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'expense_requests' },
+          () => {
+            void fetchRequests(user.role);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'approval_logs' },
+          () => {
+            void fetchRequests(user.role);
+          }
+        )
+        .subscribe();
+    }
 
-    return () => window.clearInterval(intervalId);
+    return () => {
+      if (channel && supabase) {
+        void supabase.removeChannel(channel);
+      }
+    };
   }, [user?.role, view]);
 
   const fetchDepartments = async () => {
@@ -490,14 +515,13 @@ const Approvals = () => {
                                 alt="Receipt" 
                                 className="h-auto max-h-[300px] w-full object-contain transition group-hover:scale-105"
                               />
-                              <a 
-                                href={attachment.file_url} 
-                                target="_blank" 
-                                rel="noreferrer"
+                              <button 
+                                type="button"
+                                onClick={() => setPreviewFile({ url: attachment.file_url, name: attachment.file_name || 'Receipt' })}
                                 className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition group-hover:opacity-100"
                               >
-                                <span className="btn-secondary">View Full Image</span>
-                              </a>
+                                <span className="btn-secondary">Preview Image</span>
+                              </button>
                             </div>
                           )) || (
                             <div className="flex h-[200px] items-center justify-center rounded-2xl border border-dashed border-[var(--role-border)] bg-[var(--role-accent)]">
@@ -529,17 +553,15 @@ const Approvals = () => {
                                     <span className="mt-1 block truncate text-[10px] text-[var(--role-text)]/60">{attachment.file_name}</span>
                                   </div>
                                 )}
-                                <a 
-                                  href={attachment.file_url} 
-                                  target="_blank" 
-                                  rel="noreferrer"
+                                <button 
+                                  onClick={() => setPreviewFile({ url: attachment.file_url, name: attachment.file_name })}
                                   className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition group-hover:opacity-100"
                                 >
                                   <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                                   </svg>
-                                </a>
+                                </button>
                               </div>
                             ))}
                           </div>
@@ -810,6 +832,14 @@ const Approvals = () => {
         cancelLabel="Cancel"
         type="prompt"
       />
+      {previewFile && (
+        <FilePreviewer
+          isOpen={!!previewFile}
+          onClose={() => setPreviewFile(null)}
+          fileUrl={previewFile.url}
+          fileName={previewFile.name}
+        />
+      )}
     </div>
   );
 };
