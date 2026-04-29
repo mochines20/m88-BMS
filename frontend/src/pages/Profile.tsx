@@ -82,24 +82,24 @@ const Profile = () => {
   };
 
   if (isLoading) {
-    return <div className="text-white">Loading profile...</div>;
+    return <div className="text-[var(--role-text)]">Loading profile...</div>;
   }
 
   if (!user) {
-    return <div className="text-white">Profile not available.</div>;
+    return <div className="text-[var(--role-text)]">Profile not available.</div>;
   }
 
   if (user.role !== 'employee' && user.role !== 'supervisor') {
     return (
-      <div className="panel text-white">
+      <div className="panel text-[var(--role-text)]">
         <h1 className="page-title text-3xl">Profile</h1>
-        <p className="mt-3 text-[#D9E1F1]/78">Department self-edit is currently available for employees and supervisors only.</p>
+        <p className="mt-3 text-[var(--role-text)]/80">Department self-edit is currently available for employees and supervisors only.</p>
       </div>
     );
   }
 
   return (
-    <div className="text-white">
+    <div className="text-[var(--role-text)]">
       <div className="page-header">
         <h1 className="page-title">My Profile</h1>
         <p className="page-subtitle">Update your display name and department assignment so your request flow stays aligned.</p>
@@ -108,20 +108,20 @@ const Profile = () => {
       <div className="panel max-w-3xl">
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <div className="panel-muted">
-            <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/58">Role</p>
-            <p className="mt-3 text-xl font-semibold text-white capitalize">{user.role}</p>
-            <p className="mt-2 text-sm text-[#D9E1F1]/70">{user.email}</p>
+            <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/60">Role</p>
+            <p className="mt-3 text-xl font-semibold text-[var(--role-text)] capitalize">{user.role}</p>
+            <p className="mt-2 text-sm text-[var(--role-text)]/75">{user.email}</p>
           </div>
           <div className="panel-muted">
-            <p className="text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/58">Department Update</p>
-            <p className="mt-3 text-sm text-[#D9E1F1]/76">Any change here will affect which department requests you see and submit under.</p>
+            <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/60">Department Update</p>
+            <p className="mt-3 text-sm text-[var(--role-text)]/80">Any change here will affect which department requests you see and submit under.</p>
           </div>
         </div>
 
         <div className="mt-6 space-y-5">
           <div className="rounded-[24px] border border-[#8FB3E2]/10 bg-[#192338]/28 p-4">
-            <p className="text-sm font-semibold text-white">Department Change Notice</p>
-            <p className="mt-2 text-sm text-[#D9E1F1]/76">
+            <p className="text-sm font-semibold text-[var(--role-text)]">Department Change Notice</p>
+            <p className="mt-2 text-sm text-[var(--role-text)]/90">
               Changing department will also move your existing requests to the new department.
             </p>
           </div>

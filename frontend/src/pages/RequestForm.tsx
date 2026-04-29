@@ -69,7 +69,7 @@ const RequestForm = () => {
   };
 
   return (
-    <div className="text-white">
+    <div className="text-[var(--role-text)]">
       <div className="page-header">
         <h1 className="page-title">New Request</h1>
         <p className="page-subtitle">Submit your budget request. You can now add multiple items in a single ticket.</p>
@@ -84,7 +84,7 @@ const RequestForm = () => {
               </svg>
             </div>
             <div>
-              <h3 className="font-semibold text-white">Multi-Item Request Form</h3>
+              <h3 className="font-semibold text-[var(--role-text)]">Multi-Item Request Form</h3>
               <p className="text-sm text-[var(--role-text)]/70">Add all items you need for this specific purpose.</p>
             </div>
           </div>
@@ -128,7 +128,7 @@ const RequestForm = () => {
                     <button 
                       type="button" 
                       onClick={() => removeItem(index)}
-                      className="mt-3 text-red-400 hover:text-red-300 transition"
+                      className="mt-3 text-red-500 hover:text-red-600 transition"
                     >
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -159,10 +159,10 @@ const RequestForm = () => {
               <textarea className="field-input min-h-[100px]" rows={3} placeholder="Describe the overall need for these items..." value={form.purpose} onChange={e => setForm({...form, purpose: e.target.value})} />
             </div>
 
-            <div className="rounded-2xl border border-[var(--role-secondary)]/20 bg-black/20 p-5">
+            <div className="rounded-2xl border border-[var(--role-secondary)]/20 bg-[var(--role-accent)] p-5">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold text-[var(--role-text)]/70 uppercase tracking-widest">Total Request Amount</span>
-                <span className="text-2xl font-bold text-white">
+                <span className="text-2xl font-bold text-[var(--role-text)]">
                   ₱{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
@@ -176,18 +176,18 @@ const RequestForm = () => {
 
         <div className="space-y-6">
           <div className="panel">
-            <h3 className="text-xl font-bold text-white">Bulk Request Tips</h3>
+            <h3 className="text-xl font-bold text-[var(--role-text)]">Bulk Request Tips</h3>
             <ul className="mt-4 space-y-4 text-sm text-[var(--role-text)]/80">
               <li className="flex gap-3">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--role-secondary)]/20 text-[10px] text-white">1</span>
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--role-secondary)]/20 text-[10px] text-[var(--role-primary)] font-bold">1</span>
                 Grouping related items (like Laptop + Mouse) makes approval faster.
               </li>
               <li className="flex gap-3">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--role-secondary)]/20 text-[10px] text-white">2</span>
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--role-secondary)]/20 text-[10px] text-[var(--role-primary)] font-bold">2</span>
                 You can add as many items as needed in one go.
               </li>
               <li className="flex gap-3">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--role-secondary)]/20 text-[10px] text-white">3</span>
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--role-secondary)]/20 text-[10px] text-[var(--role-primary)] font-bold">3</span>
                 The total amount will be automatically deducted from your department budget.
               </li>
             </ul>

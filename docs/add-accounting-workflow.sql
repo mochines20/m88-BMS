@@ -15,7 +15,8 @@ ALTER TABLE expense_requests
   ADD COLUMN IF NOT EXISTS returned_by UUID,
   ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP,
   ADD COLUMN IF NOT EXISTS return_reason TEXT,
-  ADD COLUMN IF NOT EXISTS revision_count INT DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS revision_count INT DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
 
 DO $$
 BEGIN

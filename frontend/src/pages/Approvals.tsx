@@ -346,10 +346,10 @@ const Approvals = () => {
     [departments]
   );
 
-  if (!user) return <div className="text-white">Loading...</div>;
+  if (!user) return <div className="text-[var(--role-text)]">Loading...</div>;
 
   return (
-    <div className="text-white">
+    <div className="text-[var(--role-text)]">
       <div className="page-header">
         <h1 className="page-title">{user?.role === 'supervisor' ? 'Team Approvals' : 'Finance Review'}</h1>
         <p className="page-subtitle">
@@ -363,13 +363,13 @@ const Approvals = () => {
         <div className="mb-6 flex gap-4">
           <button 
             onClick={() => setView('pending')} 
-            className={`btn-secondary !rounded-full !px-6 ${view === 'pending' ? 'bg-white/10 border-white/20' : 'opacity-50'}`}
+            className={`btn-secondary !rounded-full !px-6 ${view === 'pending' ? 'bg-[var(--role-accent)] border-[var(--role-border)]' : 'opacity-50'}`}
           >
             Pending Releases
           </button>
           <button 
             onClick={() => setView('liquidations')} 
-            className={`btn-secondary !rounded-full !px-6 ${view === 'liquidations' ? 'bg-white/10 border-white/20' : 'opacity-50'}`}
+            className={`btn-secondary !rounded-full !px-6 ${view === 'liquidations' ? 'bg-[var(--role-accent)] border-[var(--role-border)]' : 'opacity-50'}`}
           >
             Liquidation Review
           </button>
@@ -378,8 +378,8 @@ const Approvals = () => {
 
       {requests.length === 0 ? (
         <div className="panel text-center">
-          <p className="text-xl font-semibold text-white">No pending approvals at this time.</p>
-          <p className="mt-2 text-[#D9E1F1]/78">New requests will appear here automatically when they reach your stage.</p>
+          <p className="text-xl font-semibold text-[var(--role-text)]">No pending approvals at this time.</p>
+          <p className="mt-2 text-[var(--role-text)]/60">New requests will appear here automatically when they reach your stage.</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -401,23 +401,54 @@ const Approvals = () => {
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-3">
-                        <h2 className="text-2xl font-bold text-white">{req.item_name}</h2>
-                        <span className="rounded-full border border-[#8FB3E2]/16 bg-[#31487A]/22 px-3 py-1 text-sm font-medium text-white">
+                        <h2 className="text-2xl font-bold text-[var(--role-text)]">{req.item_name}</h2>
+                        <span className="rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] px-3 py-1 text-sm font-medium text-[var(--role-text)]">
                           {getStatusLabel(req.status)}
                         </span>
                         {view === 'liquidations' && (
-                          <span className="rounded-full border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-sm font-bold text-emerald-400">
+                          <span className="rounded-full border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-sm font-bold text-emerald-600">
                             Liquidation Submitted
                           </span>
                         )}
                       </div>
-                      <p className="mt-2 text-lg text-[#D9E1F1]">{formatMoney(requestAmount)} • {req.category}</p>
-                      <p className={`mt-3 max-w-2xl text-[#D9E1F1]/80 ${isExpanded ? '' : 'approval-card-description'}`}>{req.purpose}</p>
+                      <p className="mt-2 text-lg text-[var(--role-text)]/90">{formatMoney(requestAmount)} • {req.category}</p>
+                      <p className={`mt-3 max-w-2xl text-[var(--role-text)]/70 ${isExpanded ? '' : 'approval-card-description'}`}>{req.purpose}</p>
+                      {isExpanded && req.metadata?.items && (
+                        <div className="mt-4 space-y-2">
+                          <p className="text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Item Breakdown</p>
+                          <div className="overflow-hidden rounded-xl border border-[var(--role-border)]/10 bg-[var(--role-accent)]">
+                            <table className="w-full text-left text-sm">
+                              <thead className="border-b border-[var(--role-border)]/10 bg-[var(--role-border)]/5">
+                                <tr>
+                                  <th className="px-4 py-2 font-semibold">Date</th>
+                                  <th className="px-4 py-2 font-semibold">Payee</th>
+                                  <th className="px-4 py-2 font-semibold">Type</th>
+                                  <th className="px-4 py-2 text-right font-semibold">Amount</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {req.metadata.items.map((item: any, idx: number) => (
+                                  <tr key={idx} className="border-b border-[var(--role-border)]/5 last:border-0">
+                                    <td className="px-4 py-2">{item.expense_date}</td>
+                                    <td className="px-4 py-2">{item.payee_name}</td>
+                                    <td className="px-4 py-2">{item.expense_type}</td>
+                                    <td className="px-4 py-2 text-right font-medium">{formatMoney(item.amount)}</td>
+                                  </tr>
+                                ))}
+                                <tr className="bg-[var(--role-border)]/5 font-bold">
+                                  <td colSpan={3} className="px-4 py-2 text-right">Total</td>
+                                  <td className="px-4 py-2 text-right">{formatMoney(req.amount)}</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <div className="space-y-2 text-sm text-[#D9E1F1]/78 lg:text-right">
-                      <p>Priority: <span className="font-semibold capitalize text-white">{req.priority}</span></p>
-                      <p>Submitted: <span className="font-semibold text-white">{new Date(req.submitted_at).toLocaleDateString()}</span></p>
-                      <span className="inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-white">
+                    <div className="space-y-2 text-sm text-[var(--role-text)]/60 lg:text-right">
+                      <p>Priority: <span className="font-semibold capitalize text-[var(--role-text)]">{req.priority}</span></p>
+                      <p>Submitted: <span className="font-semibold text-[var(--role-text)]">{new Date(req.submitted_at).toLocaleString()}</span></p>
+                      <span className="inline-flex rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--role-text)]">
                         {isExpanded ? 'Collapse' : 'Expand'}
                       </span>
                     </div>
@@ -430,30 +461,30 @@ const Approvals = () => {
                       <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
                         <div className="space-y-4">
                           <div className="panel-muted !border-emerald-500/10 !bg-emerald-500/5">
-                            <h3 className="text-sm font-bold uppercase tracking-widest text-emerald-400">Liquidation Details</h3>
+                            <h3 className="text-sm font-bold uppercase tracking-widest text-emerald-600">Liquidation Details</h3>
                             <div className="mt-4 space-y-3">
                               <div className="flex justify-between">
-                                <span className="text-[#D9E1F1]/60">Actual Amount:</span>
-                                <span className="font-bold text-white">{formatMoney(toNumber(req.latest_liquidation.actual_amount))}</span>
+                                <span className="text-[var(--role-text)]/60">Actual Amount:</span>
+                                <span className="font-bold text-[var(--role-text)]">{formatMoney(toNumber(req.latest_liquidation.actual_amount))}</span>
                               </div>
                               <div className="flex justify-between">
-                                <span className="text-[#D9E1F1]/60">Difference:</span>
-                                <span className={`font-bold ${toNumber(req.latest_liquidation.actual_amount) > toNumber(req.amount) ? 'text-orange-400' : 'text-emerald-400'}`}>
+                                <span className="text-[var(--role-text)]/60">Difference:</span>
+                                <span className={`font-bold ${toNumber(req.latest_liquidation.actual_amount) > toNumber(req.amount) ? 'text-orange-600' : 'text-emerald-600'}`}>
                                   {formatMoney(toNumber(req.latest_liquidation.actual_amount) - toNumber(req.amount))}
                                 </span>
                               </div>
                               <div className="pt-2">
-                                <p className="text-xs uppercase tracking-wider text-[#D9E1F1]/50">Remarks:</p>
-                                <p className="mt-1 text-sm italic text-white">"{req.latest_liquidation.remarks || 'No remarks provided'}"</p>
+                                <p className="text-xs uppercase tracking-wider text-[var(--role-text)]/50">Remarks:</p>
+                                <p className="mt-1 text-sm italic text-[var(--role-text)]">"{req.latest_liquidation.remarks || 'No remarks provided'}"</p>
                               </div>
                             </div>
                           </div>
                         </div>
 
                         <div>
-                          <p className="mb-2 text-xs uppercase tracking-[0.16em] text-[#D9E1F1]/56">Receipt / Attachment</p>
+                          <p className="mb-2 text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/50">Receipt / Attachment</p>
                           {req.attachments?.filter((a: any) => a.attachment_scope === 'liquidation').map((attachment: any) => (
-                            <div key={attachment.id} className="group relative overflow-hidden rounded-2xl border border-[#8FB3E2]/20 bg-black/20">
+                            <div key={attachment.id} className="group relative overflow-hidden rounded-2xl border border-[var(--role-border)] bg-[var(--role-accent)]">
                               <img 
                                 src={attachment.file_url} 
                                 alt="Receipt" 
@@ -469,8 +500,8 @@ const Approvals = () => {
                               </a>
                             </div>
                           )) || (
-                            <div className="flex h-[200px] items-center justify-center rounded-2xl border border-dashed border-white/10 bg-black/10">
-                              <p className="text-[#D9E1F1]/40">No receipt attached</p>
+                            <div className="flex h-[200px] items-center justify-center rounded-2xl border border-dashed border-[var(--role-border)] bg-[var(--role-accent)]">
+                              <p className="text-[var(--role-text)]/40">No receipt attached</p>
                             </div>
                           )}
                         </div>
@@ -478,18 +509,55 @@ const Approvals = () => {
                     )}
 
                     <div className="mb-5 mt-5">
-                      <p className="text-sm text-[#8FB3E2]/90">
-                        Requested by <span className="font-semibold text-white">{getRequesterName(req)}</span>
+                      {req.attachments && req.attachments.length > 0 && (
+                        <div className="mb-6">
+                          <p className="mb-2 text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Supporting Documents</p>
+                          <div className="flex flex-wrap gap-4">
+                            {req.attachments.map((attachment: any) => (
+                              <div key={attachment.id} className="group relative h-24 w-24 overflow-hidden rounded-xl border border-[var(--role-border)]/10 bg-[var(--role-accent)] transition hover:border-[var(--role-secondary)]/30">
+                                {attachment.attachment_type?.startsWith('image/') ? (
+                                  <img 
+                                    src={attachment.file_url} 
+                                    alt={attachment.file_name} 
+                                    className="h-full w-full object-cover transition group-hover:scale-110"
+                                  />
+                                ) : (
+                                  <div className="flex h-full w-full flex-col items-center justify-center p-2 text-center">
+                                    <svg className="h-8 w-8 text-[var(--role-text)]/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                    </svg>
+                                    <span className="mt-1 block truncate text-[10px] text-[var(--role-text)]/60">{attachment.file_name}</span>
+                                  </div>
+                                )}
+                                <a 
+                                  href={attachment.file_url} 
+                                  target="_blank" 
+                                  rel="noreferrer"
+                                  className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition group-hover:opacity-100"
+                                >
+                                  <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                  </svg>
+                                </a>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <p className="text-sm text-[var(--role-secondary)]">
+                        Requested by <span className="font-semibold text-[var(--role-text)]">{getRequesterName(req)}</span>
                       </p>
-                      <p className="mt-1 text-sm text-[#D9E1F1]/76">
-                        Requesting Department: <span className="font-semibold text-white">{req.department_name || 'Unknown department'}</span>
+                      <p className="mt-1 text-sm text-[var(--role-text)]/70">
+                        Requesting Department: <span className="font-semibold text-[var(--role-text)]">{req.department_name || 'Unknown department'}</span>
                       </p>
                     </div>
 
                     {user.role === 'supervisor' && (
-                      <div className="mb-5 rounded-[24px] border border-[#8FB3E2]/10 bg-black/10 p-4">
-                        <h3 className="text-lg font-semibold text-white">Urgency Control</h3>
-                        <p className="mt-1 text-sm text-[#D9E1F1]/68">Supervisors can raise or lower the urgency before approval.</p>
+                      <div className="mb-5 rounded-[24px] border border-[var(--role-border)] bg-[var(--role-accent)] p-4">
+                        <h3 className="text-lg font-semibold text-[var(--role-text)]">Urgency Control</h3>
+                        <p className="mt-1 text-sm text-[var(--role-text)]/60">Supervisors can raise or lower the urgency before approval.</p>
                         <div className="mt-4 flex flex-wrap items-center gap-3">
                           <select
                             className="field-input max-w-[220px]"
@@ -515,23 +583,23 @@ const Approvals = () => {
                     )}
 
                     {user.role === 'accounting' && (
-                      <div className="mb-5 rounded-[24px] border border-[#8FB3E2]/10 bg-black/10 p-4">
+                      <div className="mb-5 rounded-[24px] border border-[var(--role-border)] bg-[var(--role-accent)] p-4">
                         <button
                           type="button"
                           onClick={() => toggleSplitPanel(req.id)}
-                          className="flex w-full flex-col gap-3 rounded-[20px] border border-[#8FB3E2]/12 bg-[#31487A]/12 px-4 py-4 text-left transition hover:border-[#8FB3E2]/26 hover:bg-[#31487A]/18 sm:flex-row sm:items-center sm:justify-between"
+                          className="flex w-full flex-col gap-3 rounded-[20px] border border-[var(--role-border)] bg-[var(--role-surface)] px-4 py-4 text-left transition hover:border-[var(--role-secondary)]/30 hover:bg-[var(--role-accent)] sm:flex-row sm:items-center sm:justify-between"
                         >
                           <div>
-                            <h3 className="text-lg font-semibold text-white">Department Allocation Split</h3>
-                            <p className="mt-1 text-sm text-[#D9E1F1]/68">
+                            <h3 className="text-lg font-semibold text-[var(--role-text)]">Department Allocation Split</h3>
+                            <p className="mt-1 text-sm text-[var(--role-text)]/60">
                               Click to {isSplitExpanded ? 'hide' : 'manage'} the department split before release.
                             </p>
                           </div>
                           <div className="flex items-center gap-4">
-                            <div className="text-sm text-[#D9E1F1]/72">
-                              Total allocated: <span className="font-semibold text-white">{formatMoney(draftTotal)}</span> / {formatMoney(requestAmount)}
+                            <div className="text-sm text-[var(--role-text)]/70">
+                              Total allocated: <span className="font-semibold text-[var(--role-text)]">{formatMoney(draftTotal)}</span> / {formatMoney(requestAmount)}
                             </div>
-                            <span className="rounded-full border border-[#8FB3E2]/16 bg-black/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-white">
+                            <span className="rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--role-text)]">
                               {isSplitExpanded ? 'Hide' : 'Open'}
                             </span>
                           </div>
@@ -539,34 +607,34 @@ const Approvals = () => {
 
                         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
                           <div className="panel-muted !p-4">
-                            <p className="text-xs uppercase tracking-[0.14em] text-[#D9E1F1]/56">Requesting Dept Total Budget</p>
-                            <p className="mt-2 text-lg font-semibold text-white">{formatMoney(requestingDepartmentBudget)}</p>
-                            <p className="mt-1 text-xs text-[#D9E1F1]/62">{req.department_name || 'Unknown department'} total annual budget</p>
+                            <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/50">Requesting Dept Total Budget</p>
+                            <p className="mt-2 text-lg font-semibold text-[var(--role-text)]">{formatMoney(requestingDepartmentBudget)}</p>
+                            <p className="mt-1 text-xs text-[var(--role-text)]/60">{req.department_name || 'Unknown department'} total annual budget</p>
                           </div>
                           <div className="panel-muted !p-4">
-                            <p className="text-xs uppercase tracking-[0.14em] text-[#D9E1F1]/56">Preview Total Budget</p>
-                            <p className="mt-2 text-lg font-semibold text-white">{formatMoney(requestAmount)}</p>
-                            <p className="mt-1 text-xs text-[#D9E1F1]/62">Full request amount before approval</p>
+                            <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/50">Preview Total Budget</p>
+                            <p className="mt-2 text-lg font-semibold text-[var(--role-text)]">{formatMoney(requestAmount)}</p>
+                            <p className="mt-1 text-xs text-[var(--role-text)]/60">Full request amount before approval</p>
                           </div>
                           <div className="panel-muted !p-4">
-                            <p className="text-xs uppercase tracking-[0.14em] text-[#D9E1F1]/56">Allocated Draft</p>
-                            <p className="mt-2 text-lg font-semibold text-white">{formatMoney(draftTotal)}</p>
-                            <p className="mt-1 text-xs text-[#D9E1F1]/62">Current split total from accounting</p>
+                            <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/50">Allocated Draft</p>
+                            <p className="mt-2 text-lg font-semibold text-[var(--role-text)]">{formatMoney(draftTotal)}</p>
+                            <p className="mt-1 text-xs text-[var(--role-text)]/60">Current split total from accounting</p>
                           </div>
                         </div>
 
                         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                           <div className="panel-muted !p-4">
-                            <p className="text-xs uppercase tracking-[0.14em] text-[#D9E1F1]/56">Dept Remaining After Approval</p>
-                            <p className="mt-2 text-lg font-semibold text-white">{formatMoney(projectedRemainingAfterApproval)}</p>
-                            <p className="mt-1 text-xs text-[#D9E1F1]/62">
+                            <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/50">Dept Remaining After Approval</p>
+                            <p className="mt-2 text-lg font-semibold text-[var(--role-text)]">{formatMoney(projectedRemainingAfterApproval)}</p>
+                            <p className="mt-1 text-xs text-[var(--role-text)]/60">
                               Current remaining {formatMoney(requestingDepartmentRemaining)} before approval
                             </p>
                           </div>
                           <div className="panel-muted !p-4">
-                            <p className="text-xs uppercase tracking-[0.14em] text-[#D9E1F1]/56">Balance to Allocate</p>
-                            <p className="mt-2 text-lg font-semibold text-white">{formatMoney(remainingToAllocate)}</p>
-                            <p className="mt-1 text-xs text-[#D9E1F1]/62">Should be zero before final approval</p>
+                            <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/50">Balance to Allocate</p>
+                            <p className="mt-2 text-lg font-semibold text-[var(--role-text)]">{formatMoney(remainingToAllocate)}</p>
+                            <p className="mt-1 text-xs text-[var(--role-text)]/60">Should be zero before final approval</p>
                           </div>
                         </div>
 
@@ -628,8 +696,8 @@ const Approvals = () => {
                     )}
 
                     {user.role === 'accounting' && (
-                      <div className="mb-5 rounded-[24px] border border-[#8FB3E2]/10 bg-black/10 p-4">
-                        <h3 className="text-lg font-semibold text-white">Release Details</h3>
+                      <div className="mb-5 rounded-[24px] border border-[var(--role-border)] bg-[var(--role-accent)] p-4">
+                        <h3 className="text-lg font-semibold text-[var(--role-text)]">Release Details</h3>
                         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                           <select
                             className="field-input"
@@ -667,12 +735,12 @@ const Approvals = () => {
                     <div className="mb-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                       {(req.allocations || []).map((allocation: any) => (
                         <div key={`${req.id}-${allocation.department_id}`} className="panel-muted !p-4">
-                          <p className="text-xs uppercase tracking-[0.14em] text-[#D9E1F1]/56">{allocation.department_name}</p>
-                          <p className="mt-2 text-lg font-semibold text-white">{formatMoney(toNumber(allocation.amount))}</p>
-                          <p className="mt-1 text-xs text-[#D9E1F1]/62">
+                          <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/50">{allocation.department_name}</p>
+                          <p className="mt-2 text-lg font-semibold text-[var(--role-text)]">{formatMoney(toNumber(allocation.amount))}</p>
+                          <p className="mt-1 text-xs text-[var(--role-text)]/60">
                             Remaining {formatMoney(toNumber(allocation.remaining_budget))}
                           </p>
-                          <p className="mt-1 text-xs text-[#D9E1F1]/62">
+                          <p className="mt-1 text-xs text-[var(--role-text)]/60">
                             Projected {formatMoney(toNumber(allocation.projected_remaining_budget))}
                           </p>
                         </div>

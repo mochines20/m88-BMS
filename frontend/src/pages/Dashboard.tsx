@@ -36,16 +36,16 @@ const getStatusLabel = (status: string) => {
 const getStatusTone = (status: string) => {
   switch (status) {
     case 'pending_supervisor':
-      return 'border-[var(--role-secondary)]/22 bg-[var(--role-primary)]/34 text-white';
+      return 'border-[var(--role-secondary)]/30 bg-[var(--role-secondary)]/10 text-[var(--role-secondary)]';
     case 'pending_accounting':
-      return 'border-[var(--role-secondary)]/28 bg-[var(--role-secondary)]/16 text-white';
+      return 'border-[var(--role-primary)]/30 bg-[var(--role-primary)]/10 text-[var(--role-primary)]';
     case 'released':
     case 'approved':
-      return 'border-[var(--role-text)]/18 bg-[var(--role-text)]/10 text-white';
+      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
     case 'rejected':
-      return 'border-white/10 bg-white/5 text-[var(--role-text)]/82';
+      return 'border-red-500/30 bg-red-500/10 text-red-600';
     default:
-      return 'border-white/10 bg-white/5 text-white';
+      return 'border-[var(--role-border)] bg-[var(--role-accent)] text-[var(--role-text)]/70';
   }
 };
 
@@ -252,10 +252,10 @@ const Dashboard = () => {
     }
   };
 
-  if (!user) return <div className="text-white">Loading...</div>;
+  if (!user) return <div className="text-[var(--role-text)]">Loading...</div>;
 
   return (
-    <div className="text-white">
+    <div className="text-[var(--role-text)]">
       <div className="page-header">
         <h1 className="page-title">Dashboard</h1>
         <p className="page-subtitle">
@@ -367,8 +367,8 @@ const Dashboard = () => {
         <div className="panel">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-2xl font-bold text-white">{getRoleFocus(user.role)}</h2>
-              <p className="mt-2 text-sm text-[var(--role-text)]/72">
+              <h2 className="text-2xl font-bold text-[var(--role-text)]">{getRoleFocus(user.role)}</h2>
+              <p className="mt-2 text-sm text-[var(--role-text)]/70">
                 {user.role === 'employee'
                   ? 'Track your budget requests and their approval progress.'
                   : user.role === 'supervisor'
@@ -380,7 +380,7 @@ const Dashboard = () => {
             </div>
             <div className="flex flex-wrap items-center justify-end gap-3">
               {(user.role === 'supervisor' || user.role === 'accounting' || user.role === 'admin') && (
-                <div className="flex items-center overflow-hidden rounded-full border border-[var(--role-secondary)]/14 bg-[var(--role-primary)]/24 p-1">
+                <div className="flex items-center overflow-hidden rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] p-1">
                   {[
                     { key: 'active', label: 'Active' },
                     { key: 'archived', label: 'Archived' },
@@ -395,8 +395,8 @@ const Dashboard = () => {
                       }}
                       className={`rounded-full px-3 py-1.5 text-sm font-semibold transition ${
                         archiveView === option.key
-                          ? 'bg-[var(--role-text)]/12 text-white'
-                          : 'text-[var(--role-text)]/72'
+                          ? 'bg-[var(--role-surface)] text-[var(--role-text)] shadow-sm'
+                          : 'text-[var(--role-text)]/60 hover:text-[var(--role-text)]'
                       }`}
                     >
                       {option.label}
@@ -405,8 +405,8 @@ const Dashboard = () => {
                 </div>
               )}
               {user.role !== 'employee' && user.role !== 'super_admin' && (
-                <div className="rounded-full border border-[var(--role-secondary)]/14 bg-[var(--role-primary)]/24 px-4 py-2 text-sm text-[var(--role-text)]/82">
-                  Total Amount: <span className="font-semibold text-white">{formatMoney(stats.totalAmount)}</span>
+                <div className="rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] px-4 py-2 text-sm text-[var(--role-text)]/70">
+                  Total Amount: <span className="font-semibold text-[var(--role-text)]">{formatMoney(stats.totalAmount)}</span>
                 </div>
               )}
             </div>
@@ -416,19 +416,19 @@ const Dashboard = () => {
             {user.role !== 'employee' && user.role !== 'super_admin' && (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <div className="panel-muted !p-4">
-                  <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/56">Pending Amount</p>
-                  <p className="mt-2 text-lg font-semibold text-white">{formatMoney(stats.pendingAmount)}</p>
-                  <p className="mt-1 text-xs text-[var(--role-text)]/62">Requests still waiting for action</p>
+                  <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/50">Pending Amount</p>
+                  <p className="mt-2 text-lg font-semibold text-[var(--role-text)]">{formatMoney(stats.pendingAmount)}</p>
+                  <p className="mt-1 text-xs text-[var(--role-text)]/60">Requests still waiting for action</p>
                 </div>
                 <div className="panel-muted !p-4">
-                  <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/56">Released Amount</p>
-                  <p className="mt-2 text-lg font-semibold text-white">{formatMoney(stats.releasedAmount)}</p>
-                  <p className="mt-1 text-xs text-[var(--role-text)]/62">Requests already released</p>
+                  <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/50">Released Amount</p>
+                  <p className="mt-2 text-lg font-semibold text-[var(--role-text)]">{formatMoney(stats.releasedAmount)}</p>
+                  <p className="mt-1 text-xs text-[var(--role-text)]/60">Requests already released</p>
                 </div>
                 <div className="panel-muted !p-4">
-                  <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/56">Rejected Amount</p>
-                  <p className="mt-2 text-lg font-semibold text-white">{formatMoney(stats.rejectedAmount)}</p>
-                  <p className="mt-1 text-xs text-[var(--role-text)]/62">Requests declined in review</p>
+                  <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/50">Rejected Amount</p>
+                  <p className="mt-2 text-lg font-semibold text-[var(--role-text)]">{formatMoney(stats.rejectedAmount)}</p>
+                  <p className="mt-1 text-xs text-[var(--role-text)]/60">Requests declined in review</p>
                 </div>
               </div>
             )}
@@ -440,18 +440,18 @@ const Dashboard = () => {
             )}
 
             {paginatedRequests.map((request: any) => (
-              <div key={request.id} className="rounded-[24px] border border-[var(--role-secondary)]/10 bg-[#192338]/34 p-4">
+              <div key={request.id} className="rounded-[24px] border border-[var(--role-border)] bg-[var(--role-accent)] p-4 transition-all hover:border-[var(--role-secondary)]/30">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0">
-                    <h3 className="break-words text-lg font-semibold text-white">{request.item_name}</h3>
-                    <p className="mt-1 break-words text-sm text-[var(--role-text)]/72">
+                    <h3 className="break-words text-lg font-semibold text-[var(--role-text)]">{request.item_name}</h3>
+                    <p className="mt-1 break-words text-sm text-[var(--role-text)]/60">
                       {request.request_code} • {request.category} {user.role !== 'super_admin' && `• ${formatMoney(toNumber(request.amount))}`}
                     </p>
-                    <p className="mt-1 text-sm text-[var(--role-secondary)]/90">
-                      Requested by <span className="font-semibold text-white">{getRequesterName(request)}</span>
-                      <span className="text-[var(--role-text)]/72"> • {getRequesterDepartment(request)}</span>
+                    <p className="mt-1 text-sm text-[var(--role-secondary)]">
+                      Requested by <span className="font-semibold text-[var(--role-text)]">{getRequesterName(request)}</span>
+                      <span className="text-[var(--role-text)]/60"> • {getRequesterDepartment(request)}</span>
                     </p>
-                    <p className="mt-2 text-sm text-[var(--role-text)]/84">{getStatusLabel(request.status)}</p>
+                    <p className="mt-2 text-sm text-[var(--role-text)]/80">{getStatusLabel(request.status)}</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                     <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${getStatusTone(request.status)}`}>
@@ -463,8 +463,8 @@ const Dashboard = () => {
                         onClick={() => void toggleArchive(request.id, !request.archived)}
                         className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
                           request.archived
-                            ? 'border-emerald-300/30 bg-emerald-500/12 text-emerald-100'
-                            : 'border-amber-300/30 bg-amber-500/12 text-amber-100'
+                            ? 'border-emerald-300/30 bg-emerald-500/12 text-emerald-700'
+                            : 'border-amber-300/30 bg-amber-500/12 text-amber-700'
                         }`}
                       >
                         {request.archived ? 'Unarchive' : 'Archive'}
@@ -473,13 +473,13 @@ const Dashboard = () => {
                   </div>
                 </div>
 
-                <div className="mt-4 rounded-[22px] border border-[var(--role-secondary)]/10 bg-black/10 p-3">
-                  <div className="mb-3 h-2 overflow-hidden rounded-full bg-[#1E2F4F]">
+                <div className="mt-4 rounded-[22px] border border-[var(--role-border)] bg-[var(--role-surface)] p-3">
+                  <div className="mb-3 h-2 overflow-hidden rounded-full bg-[var(--role-accent)]">
                     <div className="flex h-full w-full">
                       <div className="h-full flex-1 bg-[var(--role-secondary)]" />
-                      <div className={`h-full flex-1 ${request.status === 'pending_supervisor' ? 'bg-[var(--role-text)]' : ['pending_accounting', 'approved', 'released', 'rejected'].includes(request.status) ? 'bg-[var(--role-secondary)]' : 'bg-[var(--role-primary)]'}`} />
-                      <div className={`h-full flex-1 ${request.status === 'pending_accounting' ? 'bg-[var(--role-text)]' : ['approved', 'released'].includes(request.status) ? 'bg-[var(--role-secondary)]' : 'bg-[var(--role-primary)]'}`} />
-                      <div className={`h-full flex-1 ${request.status === 'released' ? 'bg-[var(--role-text)]' : request.status === 'approved' ? 'bg-[var(--role-secondary)]' : 'bg-[var(--role-primary)]'}`} />
+                      <div className={`h-full flex-1 ${request.status === 'pending_supervisor' ? 'bg-[var(--role-text)]/20' : ['pending_accounting', 'approved', 'released', 'rejected'].includes(request.status) ? 'bg-[var(--role-secondary)]' : 'bg-[var(--role-accent)]'}`} />
+                      <div className={`h-full flex-1 ${request.status === 'pending_accounting' ? 'bg-[var(--role-text)]/20' : ['approved', 'released'].includes(request.status) ? 'bg-[var(--role-secondary)]' : 'bg-[var(--role-accent)]'}`} />
+                      <div className={`h-full flex-1 ${request.status === 'released' ? 'bg-[var(--role-text)]/20' : request.status === 'approved' ? 'bg-[var(--role-secondary)]' : 'bg-[var(--role-accent)]'}`} />
                     </div>
                   </div>
 
@@ -508,7 +508,7 @@ const Dashboard = () => {
                       icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z'
                     }
                   ].map((step) => (
-                    <div key={step.key} className="rounded-2xl border border-white/8 bg-black/10 p-3 transition-all">
+                    <div key={step.key} className="rounded-2xl border border-[var(--role-border)] bg-[var(--role-accent)] p-3 transition-all">
                       <div className="flex items-center gap-2">
                         <span
                           className={`flex h-5 w-5 items-center justify-center rounded-full ${
@@ -516,20 +516,20 @@ const Dashboard = () => {
                               ? 'bg-[var(--role-text)]' 
                               : step.active 
                                 ? 'bg-[var(--role-secondary)]' 
-                                : 'bg-[var(--role-primary)]'
+                                : 'bg-[var(--role-border)]'
                           }`}
                         >
                           {step.active && !step.current ? (
-                            <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <svg className="h-3 w-3 text-[var(--role-text-inverse)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                             </svg>
                           ) : step.current ? (
-                            <svg className="h-3 w-3 text-white animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <svg className="h-3 w-3 text-[var(--role-text-inverse)] animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                           ) : null}
                         </span>
-                        <span className={`text-sm ${step.current ? 'text-white font-semibold' : step.active ? 'text-white/90' : 'text-white/60'}`}>{step.label}</span>
+                        <span className={`text-sm ${step.current ? 'text-[var(--role-text)] font-semibold' : step.active ? 'text-[var(--role-text)]/90' : 'text-[var(--role-text)]/40'}`}>{step.label}</span>
                       </div>
                     </div>
                   ))}
@@ -539,9 +539,9 @@ const Dashboard = () => {
             ))}
 
             {recentRequests.length > pageSize && (
-              <div className="flex items-center justify-between gap-3 rounded-[22px] border border-[var(--role-secondary)]/10 bg-black/10 px-4 py-3">
-                <p className="text-sm text-[var(--role-text)]/72">
-                  Page <span className="font-semibold text-white">{flowPage}</span> of <span className="font-semibold text-white">{totalFlowPages}</span>
+              <div className="flex items-center justify-between gap-3 rounded-[22px] border border-[var(--role-border)] bg-[var(--role-accent)] px-4 py-3">
+                <p className="text-sm text-[var(--role-text)]/60">
+                  Page <span className="font-semibold text-[var(--role-text)]">{flowPage}</span> of <span className="font-semibold text-[var(--role-text)]">{totalFlowPages}</span>
                 </p>
                 <div className="flex items-center gap-2">
                   <button
@@ -568,10 +568,10 @@ const Dashboard = () => {
 
         <div className="space-y-6">
           <div className="panel">
-            <h2 className="text-2xl font-bold text-white">
+            <h2 className="text-2xl font-bold text-[var(--role-text)]">
               {user.role === 'employee' ? 'Your Tasks' : user.role === 'supervisor' ? 'Approval Queue' : user.role === 'super_admin' ? 'Root Access' : 'Financial Controls'}
             </h2>
-            <p className="mt-2 text-sm text-[var(--role-text)]/72">
+            <p className="mt-2 text-sm text-[var(--role-text)]/70">
               {user.role === 'employee' 
                 ? 'Submit and track your budget requests.' 
                 : user.role === 'supervisor' 
@@ -583,16 +583,16 @@ const Dashboard = () => {
             <div className="mt-5 grid grid-cols-1 gap-3">
               {user.role === 'employee' && (
                 <>
-                  <button onClick={() => navigate('/request')} className="btn-primary w-full !justify-start gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10">
+                  <button onClick={() => navigate('/request')} className="btn-primary w-full !justify-start items-center gap-4 min-h-[72px]">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--role-text-inverse)]/20">
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                       </svg>
                     </span>
                     Submit New Request
                   </button>
-                  <button onClick={() => navigate('/tracker')} className="btn-secondary w-full !justify-start gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10">
+                  <button onClick={() => navigate('/tracker')} className="btn-secondary w-full !justify-start items-center gap-4 min-h-[72px]">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--role-text)]/5">
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                       </svg>
@@ -603,21 +603,21 @@ const Dashboard = () => {
               )}
               {user.role === 'supervisor' && (
                 <>
-                  <button onClick={() => navigate('/approvals')} className="btn-primary w-full !justify-start gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10">
+                  <button onClick={() => navigate('/approvals')} className="relative btn-primary w-full !justify-center items-center gap-4 min-h-[72px] px-14">
+                    <span className="absolute left-4 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--role-text-inverse)]/20">
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                     </span>
-                    Review Team Requests
+                    <span className="font-semibold">Review Team Requests</span>
                     {stats.pendingSupervisor > 0 && (
-                      <span className="ml-auto rounded-full bg-white/20 px-2 py-0.5 text-xs">
+                      <span className="absolute right-4 inline-flex items-center rounded-full bg-white/20 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-white">
                         {stats.pendingSupervisor} pending
                       </span>
                     )}
                   </button>
-                  <button onClick={() => navigate('/reports')} className="btn-secondary w-full !justify-start gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10">
+                  <button onClick={() => navigate('/reports')} className="btn-secondary w-full !justify-start items-center gap-4 min-h-[72px]">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--role-text)]/5">
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                       </svg>
@@ -628,21 +628,21 @@ const Dashboard = () => {
               )}
               {user.role === 'accounting' && (
                 <>
-                  <button onClick={() => navigate('/approvals')} className="btn-primary w-full !justify-start gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10">
+                  <button onClick={() => navigate('/approvals')} className="relative btn-primary w-full !justify-center items-center gap-4 min-h-[72px] px-14">
+                    <span className="absolute left-4 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--role-text-inverse)]/20">
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
                       </svg>
                     </span>
-                    Process Fund Releases
+                    <span className="font-semibold">Process Fund Releases</span>
                     {stats.pendingAccounting > 0 && (
-                      <span className="ml-auto rounded-full bg-white/20 px-2 py-0.5 text-xs">
+                      <span className="absolute right-4 inline-flex items-center rounded-full bg-white/20 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-white">
                         {stats.pendingAccounting} pending
                       </span>
                     )}
                   </button>
-                  <button onClick={() => navigate('/admin')} className="btn-secondary w-full !justify-start gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10">
+                  <button onClick={() => navigate('/admin')} className="btn-secondary w-full !justify-start items-center gap-4 min-h-[72px]">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--role-text)]/5">
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                       </svg>
@@ -653,8 +653,8 @@ const Dashboard = () => {
               )}
               {user.role === 'admin' && (
                 <>
-                  <button onClick={() => navigate('/admin')} className="btn-primary w-full !justify-start gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10">
+                  <button onClick={() => navigate('/admin')} className="btn-primary w-full !justify-start items-center gap-4 min-h-[72px]">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--role-text-inverse)]/20">
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -662,8 +662,8 @@ const Dashboard = () => {
                     </span>
                     System Administration
                   </button>
-                  <button onClick={() => navigate('/reports')} className="btn-secondary w-full !justify-start gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10">
+                  <button onClick={() => navigate('/reports')} className="btn-secondary w-full !justify-start items-center gap-4 min-h-[72px]">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--role-text)]/5">
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                       </svg>
@@ -674,16 +674,16 @@ const Dashboard = () => {
               )}
               {user.role === 'super_admin' && (
                 <>
-                  <button onClick={() => navigate('/admin')} className="btn-primary w-full !justify-start gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10">
+                  <button onClick={() => navigate('/admin')} className="btn-primary w-full !justify-start items-center gap-4 min-h-[72px]">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--role-text-inverse)]/20">
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                       </svg>
                     </span>
                     Root
                   </button>
-                  <button onClick={() => navigate('/')} className="btn-secondary w-full !justify-start gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10">
+                  <button onClick={() => navigate('/')} className="btn-secondary w-full !justify-start items-center gap-4 min-h-[72px]">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--role-text)]/5">
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
                       </svg>
@@ -696,8 +696,8 @@ const Dashboard = () => {
           </div>
 
           <div className="panel">
-            <h2 className="text-2xl font-bold text-white">Activity Feed</h2>
-            <p className="mt-2 text-sm text-[var(--role-text)]/72">Latest updates from the approval pipeline.</p>
+            <h2 className="text-2xl font-bold text-[var(--role-text)]">Activity Feed</h2>
+            <p className="mt-2 text-sm text-[var(--role-text)]/70">Recent updates and transitions from the budget workflow.</p>
             <div className="mt-5 space-y-3">
               {condensedTimeline.length === 0 ? (
                 <div className="panel-muted">
@@ -705,15 +705,24 @@ const Dashboard = () => {
                 </div>
               ) : (
                 condensedTimeline.slice(0, 4).map((log: any) => (
-                  <div key={log.id} className="panel-muted">
-                    <p className="font-semibold capitalize text-white">{log.action} • {log.stage}</p>
-                    <p className="mt-1 text-sm text-[var(--role-text)]/80">
-                      {log.note || 'No note provided.'}
-                      {log.count > 1 ? ` (${log.count} similar entries)` : ''}
-                    </p>
-                    <p className="mt-2 text-xs text-[var(--role-text)]/56">
-                      {log.actor_name || 'System'} {log.actor_role ? `• ${log.actor_role}` : ''} • {new Date(log.latestTimestamp).toLocaleString()}
-                    </p>
+                  <div key={log.id} className="rounded-2xl border border-[var(--role-border)] bg-[var(--role-accent)] p-4 transition-all hover:border-[var(--role-secondary)]/30">
+                    <div className="flex gap-3">
+                      <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-[var(--role-secondary)]/10 text-[var(--role-secondary)]">
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-[var(--role-text)] capitalize">{log.action} • {log.stage}</p>
+                        <p className="mt-0.5 text-xs text-[var(--role-text)]/80">
+                          {log.note || 'No note provided.'}
+                          {log.count > 1 ? ` (${log.count} similar entries)` : ''}
+                        </p>
+                        <p className="mt-1 text-xs text-[var(--role-text)]/50">
+                          {log.actor_name || 'System'} {log.actor_role ? `• ${log.actor_role}` : ''} • {new Date(log.latestTimestamp).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 ))
               )}
@@ -726,7 +735,7 @@ const Dashboard = () => {
           </div>
 
           <div className="panel">
-          <h2 className="text-2xl font-bold text-white">
+          <h2 className="text-2xl font-bold text-[var(--role-text)]">
             {user.role === 'employee' ? 'Request Guide' : user.role === 'supervisor' ? 'Review Guide' : user.role === 'super_admin' ? 'System Guide' : 'Release Guide'}
           </h2>
           <div className="mt-5 space-y-3">
@@ -739,8 +748,8 @@ const Dashboard = () => {
                   ['Not Approved', 'Your request was declined. You may revise and resubmit.']
                 ].map(([title, copy]) => (
                   <div key={title} className="panel-muted">
-                    <p className="font-semibold text-white">{title}</p>
-                    <p className="mt-1 text-sm text-[var(--role-text)]/72">{copy}</p>
+                    <p className="font-semibold text-[var(--role-text)]">{title}</p>
+                    <p className="mt-1 text-sm text-[var(--role-text)]/90">{copy}</p>
                   </div>
                 ))}
               </>
@@ -753,8 +762,8 @@ const Dashboard = () => {
                   ['Rejected', 'You declined the request; requester has been notified.']
                 ].map(([title, copy]) => (
                   <div key={title} className="panel-muted">
-                    <p className="font-semibold text-white">{title}</p>
-                    <p className="mt-1 text-sm text-[var(--role-text)]/72">{copy}</p>
+                    <p className="font-semibold text-[var(--role-text)]">{title}</p>
+                    <p className="mt-1 text-sm text-[var(--role-text)]/90">{copy}</p>
                   </div>
                 ))}
               </>
@@ -767,8 +776,8 @@ const Dashboard = () => {
                   ['Department Control', 'Manage department structures and fiscal years.']
                 ].map(([title, copy]) => (
                   <div key={title} className="panel-muted">
-                    <p className="font-semibold text-white">{title}</p>
-                    <p className="mt-1 text-sm text-[var(--role-text)]/72">{copy}</p>
+                    <p className="font-semibold text-[var(--role-text)]">{title}</p>
+                    <p className="mt-1 text-sm text-[var(--role-text)]/90">{copy}</p>
                   </div>
                 ))}
               </>
@@ -781,8 +790,8 @@ const Dashboard = () => {
                   ['Rejected', 'Request does not meet financial requirements.']
                 ].map(([title, copy]) => (
                   <div key={title} className="panel-muted">
-                    <p className="font-semibold text-white">{title}</p>
-                    <p className="mt-1 text-sm text-[var(--role-text)]/72">{copy}</p>
+                    <p className="font-semibold text-[var(--role-text)]">{title}</p>
+                    <p className="mt-1 text-sm text-[var(--role-text)]/90">{copy}</p>
                   </div>
                 ))}
               </>

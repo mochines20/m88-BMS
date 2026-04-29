@@ -232,7 +232,7 @@ const Reports = () => {
           req.item_name?.substring(0, 30) + (req.item_name?.length > 30 ? '...' : ''),
           `PHP ${Number(req.amount).toLocaleString()}`,
           req.status?.replace('_', ' ') || '-',
-          req.submitted_at ? new Date(req.submitted_at).toLocaleDateString() : '-'
+          req.submitted_at ? new Date(req.submitted_at).toLocaleString() : '-'
         ]),
         styles: { fontSize: 8 },
         headStyles: { fillColor: [49, 72, 122] }
@@ -268,7 +268,13 @@ const Reports = () => {
       minimumFractionDigits: 2
     }).format(value);
 
-  const chartColors = ['#31487A', '#8FB3E2', '#D9E1F1', '#4F46E5', '#059669'];
+  const chartColors = [
+    'var(--role-primary)',
+    'var(--role-secondary)',
+    '#10B981', // Success emerald
+    '#F59E0B', // Warning amber
+    '#EF4444'  // Error red
+  ];
 
   const statusChartData = [
     { name: 'Approved', value: summary?.approved || 0 },
@@ -311,7 +317,7 @@ const Reports = () => {
   };
 
   return (
-    <div className="text-white">
+    <div className="text-[var(--role-text)]">
       <div className="page-header">
         <h1 className="page-title">Reports</h1>
         <p className="page-subtitle">Filter expense activity, generate summaries, and export clean reports for management review.</p>
@@ -322,18 +328,18 @@ const Reports = () => {
           onClick={() => setActiveTab('requests')}
           className={`px-4 py-2 rounded-lg font-medium transition-all ${
             activeTab === 'requests'
-              ? 'bg-gradient-to-r from-[#31487A] to-[#8FB3E2] text-white shadow-lg'
-              : 'bg-white/10 text-white/70 hover:bg-white/20'
+              ? 'bg-[var(--role-primary)] text-[var(--role-text-inverse)] shadow-lg'
+              : 'text-[var(--role-text)]/60 hover:bg-[var(--role-accent)] hover:text-[var(--role-text)]'
           }`}
         >
-          Request Reports
+          All Requests
         </button>
         <button
           onClick={() => setActiveTab('cash_advance')}
-          className={`px-4 py-2 rounded-lg font-medium transition-all ${
+          className={`flex items-center gap-2 rounded-full px-5 py-2 text-sm font-semibold transition ${
             activeTab === 'cash_advance'
-              ? 'bg-gradient-to-r from-[#31487A] to-[#8FB3E2] text-white shadow-lg'
-              : 'bg-white/10 text-white/70 hover:bg-white/20'
+              ? 'bg-[var(--role-primary)] text-[var(--role-text-inverse)] shadow-lg'
+              : 'bg-[var(--role-accent)] text-[var(--role-text)]/70 hover:bg-[var(--role-accent)]/80'
           }`}
         >
           Cash Advance Aging
@@ -342,7 +348,7 @@ const Reports = () => {
 
       {activeTab === 'requests' && (
       <div className="panel mb-6">
-        <h2 className="text-2xl font-bold text-white">Filters</h2>
+        <h2 className="text-2xl font-bold text-[var(--role-text)]">Filters</h2>
         <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
           <select className="field-input" value={filters.dept} onChange={e => setFilters({ ...filters, dept: e.target.value })}>
             <option value="">All Departments</option>
@@ -396,23 +402,23 @@ const Reports = () => {
 
       {summary && (
         <div className="panel mb-6">
-          <h2 className="text-2xl font-bold text-white">Summary Report</h2>
+          <h2 className="text-2xl font-bold text-[var(--role-text)]">Summary Report</h2>
           <div className="mt-5 grid grid-cols-2 gap-4 md:grid-cols-4">
             <div className="panel-muted text-center">
-              <p className="text-3xl font-bold text-white">{summary.total_requests}</p>
-              <p className="mt-2 text-[#D9E1F1]/78">Total Requests</p>
+              <p className="text-3xl font-bold text-[var(--role-text)]">{summary.total_requests}</p>
+              <p className="mt-2 text-[var(--role-text)]/60">Total Requests</p>
             </div>
             <div className="panel-muted text-center">
-              <p className="text-3xl font-bold text-[#8FB3E2]">{summary.approved}</p>
-              <p className="mt-2 text-[#D9E1F1]/78">Approved</p>
+              <p className="text-3xl font-bold text-[var(--role-primary)]">{summary.approved}</p>
+              <p className="mt-2 text-[var(--role-text)]/60">Approved</p>
             </div>
             <div className="panel-muted text-center">
-              <p className="text-3xl font-bold text-[#D9E1F1]">{summary.rejected}</p>
-              <p className="mt-2 text-[#D9E1F1]/78">Rejected</p>
+              <p className="text-3xl font-bold text-[var(--role-secondary)]">{summary.rejected}</p>
+              <p className="mt-2 text-[var(--role-text)]/60">Rejected</p>
             </div>
             <div className="panel-muted text-center">
-              <p className="text-3xl font-bold text-white">PHP {summary.total_amount.toFixed(2)}</p>
-              <p className="mt-2 text-[#D9E1F1]/78">Total Amount</p>
+              <p className="text-3xl font-bold text-[var(--role-text)]">PHP {summary.total_amount.toFixed(2)}</p>
+              <p className="mt-2 text-[var(--role-text)]/60">Total Amount</p>
             </div>
           </div>
         </div>
@@ -421,7 +427,7 @@ const Reports = () => {
       {summary && requests.length > 0 && (
         <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
           <div className="panel">
-            <h3 className="text-lg font-bold text-white">Requests by Status</h3>
+            <h3 className="text-lg font-bold text-[var(--role-text)]">Requests by Status</h3>
             <div className="mt-4 h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -439,44 +445,55 @@ const Reports = () => {
                       <Cell key={`cell-${index}`} fill={chartColors[index % chartColors.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value: any) => [value, 'Requests']} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: 'var(--role-surface)', borderColor: 'var(--role-border)', borderRadius: '12px', color: 'var(--role-text)' }}
+                    itemStyle={{ color: 'var(--role-text)' }}
+                    formatter={(value: any) => [value, 'Requests']} 
+                  />
                 </PieChart>
               </ResponsiveContainer>
             </div>
           </div>
 
           <div className="panel">
-            <h3 className="text-lg font-bold text-white">Monthly Spending Trend</h3>
+            <h3 className="text-lg font-bold text-[var(--role-text)]">Monthly Spending Trend</h3>
             <div className="mt-4 h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={monthlyChartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#8FB3E220" />
-                  <XAxis dataKey="month" stroke="#8FB3E2" fontSize={12} />
-                  <YAxis stroke="#8FB3E2" fontSize={12} tickFormatter={(v: number) => `₱${(v/1000).toFixed(0)}k`} />
-                  <Tooltip formatter={(value: any) => [formatMoney(Number(value)), 'Amount']} />
-                  <Line type="monotone" dataKey="amount" stroke="#8FB3E2" strokeWidth={3} dot={{ fill: '#8FB3E2' }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--role-border)" />
+                  <XAxis dataKey="month" stroke="var(--role-text)" fontSize={12} />
+                  <YAxis stroke="var(--role-text)" fontSize={12} tickFormatter={(v: number) => `₱${(v/1000).toFixed(0)}k`} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: 'var(--role-surface)', borderColor: 'var(--role-border)', borderRadius: '12px', color: 'var(--role-text)' }}
+                    itemStyle={{ color: 'var(--role-text)' }}
+                    formatter={(value: any) => [formatMoney(Number(value)), 'Amount']} 
+                  />
+                  <Line type="monotone" dataKey="amount" stroke="var(--role-primary)" strokeWidth={3} dot={{ fill: 'var(--role-primary)' }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           </div>
 
           <div className="panel">
-            <h3 className="text-lg font-bold text-white">Requests by Category</h3>
+            <h3 className="text-lg font-bold text-[var(--role-text)]">Requests by Category</h3>
             <div className="mt-4 h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={categoryChartData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#8FB3E220" />
-                  <XAxis type="number" stroke="#8FB3E2" fontSize={12} />
-                  <YAxis dataKey="name" type="category" stroke="#8FB3E2" fontSize={10} width={100} />
-                  <Tooltip />
-                  <Bar dataKey="value" fill="#31487A" radius={[0, 4, 4, 0]} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--role-border)" />
+                  <XAxis type="number" stroke="var(--role-text)" fontSize={12} />
+                  <YAxis dataKey="name" type="category" stroke="var(--role-text)" fontSize={10} width={100} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: 'var(--role-surface)', borderColor: 'var(--role-border)', borderRadius: '12px', color: 'var(--role-text)' }}
+                    itemStyle={{ color: 'var(--role-text)' }}
+                  />
+                  <Bar dataKey="value" fill="var(--role-primary)" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
 
           <div className="panel">
-            <h3 className="text-lg font-bold text-white">Department Budget Overview</h3>
+            <h3 className="text-lg font-bold text-[var(--role-text)]">Department Budget Overview</h3>
             <div className="mt-4 space-y-3">
               {filterOptions.departments.slice(0, 5).map((dept) => {
                 const deptRequests = requests.filter(r => r.department_id === dept.id);
@@ -484,12 +501,12 @@ const Reports = () => {
                 return (
                   <div key={dept.id} className="space-y-1">
                     <div className="flex justify-between text-sm">
-                      <span className="text-white">{dept.name}</span>
-                      <span className="text-[#8FB3E2]">{deptRequests.length} requests</span>
+                      <span className="text-[var(--role-text)]">{dept.name}</span>
+                      <span className="text-[var(--role-text)]/60">{deptRequests.length} requests</span>
                     </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                    <div className="h-2 overflow-hidden rounded-full bg-[var(--role-border)]">
                       <div 
-                        className="h-full rounded-full bg-gradient-to-r from-[#31487A] to-[#8FB3E2]"
+                        className="h-full rounded-full bg-gradient-to-r from-[var(--role-primary)] to-[var(--role-secondary)]"
                         style={{ width: `${Math.min((totalAmount / (summary?.total_amount || 1)) * 100, 100)}%` }}
                       />
                     </div>
@@ -501,18 +518,18 @@ const Reports = () => {
         </div>
       )}
 
-      {summaryLoaded && summary && summary.total_requests === 0 && (
-        <div className="panel mb-6 text-center">
-          <p className="text-xl font-semibold text-white">No report data yet</p>
-          <p className="mt-2 text-[#D9E1F1]/78">Try adjusting the filters or submit a few requests first.</p>
+      {summaryLoaded && !summary && !requestsLoaded && (
+        <div className="panel text-center">
+          <p className="text-xl font-semibold text-[var(--role-text)]">No report data yet</p>
+          <p className="mt-2 text-[var(--role-text)]/60">Try adjusting the filters or submit a few requests first.</p>
         </div>
       )}
 
-      {requests.length > 0 && (
+      {requestsLoaded && requests.length > 0 && (
         <div className="panel">
-          <h2 className="text-2xl font-bold text-white">Requests Report</h2>
+          <h2 className="text-2xl font-bold text-[var(--role-text)]">Requests Report</h2>
           <div className="table-shell mt-5 overflow-x-auto">
-            <table className="w-full text-sm text-[#D9E1F1]">
+            <table className="w-full text-sm text-[var(--role-text)]">
               <thead>
                 <tr className="table-header">
                   <th className="p-4">Request Code</th>
@@ -538,7 +555,7 @@ const Reports = () => {
                     <td className="p-4">{req.item_name}</td>
                     <td className="p-4">PHP {Number(req.amount).toFixed(2)}</td>
                     <td className="p-4 capitalize">{req.status.replace('_', ' ')}</td>
-                    <td className="p-4">{req.submitted_at ? new Date(req.submitted_at).toLocaleDateString() : '-'}</td>
+                    <td className="p-4">{req.submitted_at ? new Date(req.submitted_at).toLocaleString() : '-'}</td>
                     {user?.role === 'accounting' && (
                       <td className="p-4">
                         {['released', 'rejected'].includes(req.status) && (
@@ -563,8 +580,8 @@ const Reports = () => {
 
       {requestsLoaded && requests.length === 0 && (
         <div className="panel text-center">
-          <p className="text-xl font-semibold text-white">No matching requests found</p>
-          <p className="mt-2 text-[#D9E1F1]/78">The current filters did not return any requests.</p>
+          <p className="text-xl font-semibold text-[var(--role-text)]">No matching requests found</p>
+          <p className="mt-2 text-[var(--role-text)]/60">The current filters did not return any requests.</p>
         </div>
       )}
 
@@ -573,20 +590,20 @@ const Reports = () => {
           {agingSummary && (
             <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
               <div className="panel">
-                <p className="text-sm text-[#D9E1F1]/78">Total Liquidations</p>
-                <p className="mt-1 text-2xl font-bold text-white">{agingSummary.total}</p>
+                <p className="text-sm text-[var(--role-text)]/60">Total Liquidations</p>
+                <p className="mt-1 text-2xl font-bold text-[var(--role-text)]">{agingSummary.total}</p>
               </div>
               <div className="panel border-l-4 border-red-500">
-                <p className="text-sm text-[#D9E1F1]/78">Overdue</p>
-                <p className="mt-1 text-2xl font-bold text-red-400">{agingSummary.overdue}</p>
+                <p className="text-sm text-[var(--role-text)]/60">Overdue</p>
+                <p className="mt-1 text-2xl font-bold text-red-500">{agingSummary.overdue}</p>
               </div>
-              <div className="panel border-l-4 border-yellow-500">
-                <p className="text-sm text-[#D9E1F1]/78">Due Soon (3 days)</p>
-                <p className="mt-1 text-2xl font-bold text-yellow-400">{agingSummary.due_soon}</p>
+              <div className="panel border-l-4 border-yellow-700">
+                <p className="text-sm text-[var(--role-text)]/60">Due Soon (3 days)</p>
+                <p className="mt-1 text-2xl font-bold text-yellow-700">{agingSummary.due_soon}</p>
               </div>
               <div className="panel border-l-4 border-green-500">
-                <p className="text-sm text-[#D9E1F1]/78">Upcoming</p>
-                <p className="mt-1 text-2xl font-bold text-green-400">{agingSummary.upcoming}</p>
+                <p className="text-sm text-[var(--role-text)]/60">Upcoming</p>
+                <p className="mt-1 text-2xl font-bold text-green-500">{agingSummary.upcoming}</p>
               </div>
             </div>
           )}
@@ -594,29 +611,29 @@ const Reports = () => {
           <div className="mb-4 flex gap-2">
             <button
               onClick={() => setAgingType('all')}
-              className={`px-3 py-1 rounded text-sm ${agingType === 'all' ? 'bg-[#31487A] text-white' : 'bg-white/10 text-white/70'}`}
+              className={`px-3 py-1 rounded text-sm transition-colors ${agingType === 'all' ? 'bg-[var(--role-primary)] text-[var(--role-text-inverse)]' : 'bg-[var(--role-accent)] text-[var(--role-text)]/70 hover:bg-[var(--role-accent)]/80'}`}
             >
               All
             </button>
             <button
               onClick={() => setAgingType('overdue')}
-              className={`px-3 py-1 rounded text-sm ${agingType === 'overdue' ? 'bg-red-600 text-white' : 'bg-white/10 text-white/70'}`}
+              className={`px-3 py-1 rounded text-sm transition-colors ${agingType === 'overdue' ? 'bg-red-600 text-white' : 'bg-[var(--role-accent)] text-[var(--role-text)]/70 hover:bg-[var(--role-accent)]/80'}`}
             >
               Overdue
             </button>
             <button
               onClick={() => setAgingType('due_soon')}
-              className={`px-3 py-1 rounded text-sm ${agingType === 'due_soon' ? 'bg-yellow-600 text-white' : 'bg-white/10 text-white/70'}`}
+              className={`px-3 py-1 rounded text-sm transition-colors ${agingType === 'due_soon' ? 'bg-yellow-600 text-white' : 'bg-[var(--role-accent)] text-[var(--role-text)]/70 hover:bg-[var(--role-accent)]/80'}`}
             >
               Due Soon
             </button>
           </div>
 
           <div className="panel">
-            <h2 className="text-2xl font-bold text-white">Cash Advance Aging Report</h2>
+            <h2 className="text-2xl font-bold text-[var(--role-text)]">Cash Advance Aging Report</h2>
             {agingLoaded && cashAdvanceAging.length > 0 && (
               <div className="table-shell mt-5 overflow-x-auto">
-                <table className="w-full text-sm text-[#D9E1F1]">
+                <table className="w-full text-sm text-[var(--role-text)]">
                   <thead>
                     <tr className="table-header">
                       <th className="p-4">Liquidation No.</th>
@@ -639,12 +656,12 @@ const Reports = () => {
                         <td className="p-4">{item.employee_name}</td>
                         <td className="p-4">{item.item_name}</td>
                         <td className="p-4">PHP {Number(item.amount).toFixed(2)}</td>
-                        <td className="p-4">{item.due_at ? new Date(item.due_at).toLocaleDateString() : '-'}</td>
+                        <td className="p-4">{item.due_at ? new Date(item.due_at).toLocaleString() : '-'}</td>
                         <td className="p-4">
                           <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
-                            item.aging_status === 'overdue' ? 'bg-red-500/20 text-red-400' :
-                            item.aging_status === 'due_soon' ? 'bg-yellow-500/20 text-yellow-400' :
-                            'bg-green-500/20 text-green-400'
+                            item.aging_status === 'overdue' ? 'bg-red-500/20 text-red-600' :
+                            item.aging_status === 'due_soon' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-green-100 text-green-800'
                           }`}>
                             {item.aging_status === 'overdue' ? `Overdue (${item.days_overdue}d)` :
                              item.aging_status === 'due_soon' ? 'Due Soon' : 'Upcoming'}
@@ -652,9 +669,9 @@ const Reports = () => {
                         </td>
                         <td className="p-4">
                           {item.aging_status === 'overdue' ? (
-                            <span className="text-red-400">{item.days_overdue} days overdue</span>
+                            <span className="text-red-600 font-medium">{item.days_overdue} days overdue</span>
                           ) : (
-                            <span>{item.days_until_due} days</span>
+                            <span className="text-[var(--role-text)]/70">{item.days_until_due} days</span>
                           )}
                         </td>
                       </tr>
@@ -665,7 +682,7 @@ const Reports = () => {
             )}
             {agingLoaded && cashAdvanceAging.filter(item => agingType === 'all' || item.aging_status === agingType).length === 0 && (
               <div className="mt-6 text-center">
-                <p className="text-lg text-[#D9E1F1]/78">No liquidations in this category</p>
+                <p className="text-lg text-[var(--role-text)]/60">No liquidations in this category</p>
               </div>
             )}
           </div>

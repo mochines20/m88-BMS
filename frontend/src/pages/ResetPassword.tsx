@@ -51,10 +51,10 @@ const ResetPassword = () => {
           <img
             src="/madison88-logo.png"
             alt="Madison88"
-            className="mx-auto mb-5 h-14 w-auto rounded-2xl border border-[#D9E1F1]/40 bg-[#f8fbff] px-4 py-3 shadow-[0_10px_28px_rgba(5,10,20,0.2)]"
+            className="mx-auto mb-5 h-14 w-auto rounded-2xl border border-[var(--role-border)] bg-white px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.06)]"
           />
-          <h1 className="text-3xl font-semibold text-white">Reset Password</h1>
-          <p className="mt-2 text-sm text-[#D9E1F1]/78">
+          <h1 className="text-3xl font-semibold text-[var(--role-text)]">Reset Password</h1>
+          <p className="mt-2 text-sm text-[var(--role-text)]/70">
             Create a new password for your Madison88 account.
           </p>
         </div>
@@ -66,7 +66,7 @@ const ResetPassword = () => {
               <button
                 type="button"
                 onClick={() => setShowPassword((current) => !current)}
-                className="text-sm text-[#D9E1F1]/78 transition hover:text-white"
+                className="text-sm text-[var(--role-primary)] transition hover:brightness-125"
               >
                 {showPassword ? 'Hide' : 'Show'}
               </button>
@@ -100,7 +100,7 @@ const ResetPassword = () => {
           <button
             type="button"
             onClick={() => navigate('/login')}
-            className="w-full text-sm text-[#D9E1F1]/78 transition hover:text-white"
+            className="w-full text-sm text-[var(--role-text)]/60 transition hover:text-[var(--role-text)]"
           >
             Back to Sign In
           </button>

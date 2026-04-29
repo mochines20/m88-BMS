@@ -216,12 +216,12 @@ const Login = () => {
     <div className="app-shell flex min-h-screen items-center justify-center px-4 py-10">
       <Toaster position="top-right" />
       {isAuthBusy && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--role-text)]/10 backdrop-blur-sm">
           <div className="panel w-full max-w-sm text-center">
             <div className="mx-auto mb-5 flex items-center justify-center">
               <div className="bms-spinner" />
             </div>
-            <p className="text-lg font-semibold text-white">Signing you in</p>
+            <p className="text-lg font-semibold text-[var(--role-text)]">Signing you in</p>
             <p className="mt-2 text-sm text-[var(--role-text)]/70">Please wait while we secure your session.</p>
             <div className="mt-6 space-y-3">
               <div className="bms-shimmer h-3 w-full rounded-full" />
@@ -232,13 +232,13 @@ const Login = () => {
         </div>
       )}
       <div className="grid w-full max-w-6xl gap-8 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="hidden rounded-[36px] border border-white/10 bg-white/5 p-10 backdrop-blur-xl lg:block">
+        <div className="hidden rounded-[36px] border border-[var(--role-border)] bg-[var(--role-accent)]/50 p-10 backdrop-blur-xl lg:block">
           <img
             src="/madison88-logo.png"
             alt="Madison88"
-            className="h-16 w-auto rounded-2xl border border-white/15 bg-[#f8fbff] px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.28)]"
-          />
-          <h1 className="mt-6 max-w-lg text-5xl font-bold leading-tight text-white">
+            className="h-16 w-auto rounded-2xl border border-[var(--role-border)] bg-[#f8fbff] px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.08)]"
+            />
+          <h1 className="mt-6 max-w-lg text-5xl font-bold leading-tight text-[var(--role-text)]">
             Streamline budget requests, approvals, and reporting in one secure workspace.
           </h1>
           <p className="mt-6 max-w-xl text-lg text-[var(--role-text)]/80">
@@ -252,7 +252,7 @@ const Login = () => {
                 </svg>
               </div>
               <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/60">Request Flow</p>
-              <p className="mt-2 text-lg font-semibold text-white">Submit to Release</p>
+              <p className="mt-2 text-lg font-semibold text-[var(--role-text)]">Submit to Release</p>
             </div>
             <div className="group panel-muted hover:border-[var(--role-primary)]/30">
               <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--role-secondary)]/20 bg-gradient-to-br from-[var(--role-primary)]/20 to-[var(--role-secondary)]/10">
@@ -261,7 +261,7 @@ const Login = () => {
                 </svg>
               </div>
               <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/60">Approvals</p>
-              <p className="mt-2 text-lg font-semibold text-white">Supervisor + Accounting</p>
+              <p className="mt-2 text-lg font-semibold text-[var(--role-text)]">Supervisor + Accounting</p>
             </div>
             <div className="group panel-muted hover:border-[var(--role-primary)]/30">
               <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--role-secondary)]/20 bg-gradient-to-br from-[var(--role-primary)]/20 to-[var(--role-secondary)]/10">
@@ -270,35 +270,35 @@ const Login = () => {
                 </svg>
               </div>
               <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/60">Reports</p>
-              <p className="mt-2 text-lg font-semibold text-white">Fast Export</p>
+              <p className="mt-2 text-lg font-semibold text-[var(--role-text)]">Fast Export</p>
             </div>
           </div>
         </div>
 
-        <div className="panel mx-auto w-full max-w-md overflow-hidden rounded-[32px] p-8 sm:p-10">
+        <div className="panel mx-auto w-full max-w-md overflow-hidden rounded-[32px] p-8 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.08)] sm:p-10">
           <div className="mb-8 text-center">
             <img
               src="/madison88-logo.png"
               alt="Madison88"
-              className="mx-auto mb-5 h-14 w-auto rounded-2xl border border-white/15 bg-[#f8fbff] px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.26)]"
+              className="mx-auto mb-5 h-14 w-auto rounded-2xl border border-[var(--role-border)] bg-white px-4 py-3 shadow-[0_8px_24px_rgba(0,0,0,0.06)]"
             />
-            <div className="mx-auto mb-5 inline-flex rounded-full border border-white/10 bg-white/5 p-1">
+            <div className="mx-auto mb-5 inline-flex rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] p-1">
               <button
                 type="button"
                 onClick={() => handleModeChange('signin')}
-                className={`rounded-full px-4 py-2 text-sm font-medium transition ${mode === 'signin' ? 'bg-[var(--role-secondary)] text-[#111827]' : 'text-[var(--role-text)]/78 hover:text-white'}`}
+                className={`rounded-full px-4 py-2 text-sm font-medium transition ${mode === 'signin' ? 'bg-[var(--role-primary)] text-white shadow-md' : 'text-[var(--role-text)]/60 hover:text-[var(--role-text)]'}`}
               >
                 Sign In
               </button>
               <button
                 type="button"
                 onClick={() => handleModeChange('signup')}
-                className={`rounded-full px-4 py-2 text-sm font-medium transition ${mode === 'signup' ? 'bg-[var(--role-secondary)] text-[#111827]' : 'text-[var(--role-text)]/78 hover:text-white'}`}
+                className={`rounded-full px-4 py-2 text-sm font-medium transition ${mode === 'signup' ? 'bg-[var(--role-primary)] text-white shadow-md' : 'text-[var(--role-text)]/60 hover:text-[var(--role-text)]'}`}
               >
                 Sign Up
               </button>
             </div>
-            <h1 className="text-3xl font-semibold text-white">{mode === 'signin' ? 'Sign In' : 'Create Account'}</h1>
+            <h1 className="text-3xl font-semibold text-[var(--role-text)]">{mode === 'signin' ? 'Sign In' : 'Create Account'}</h1>
             <p className="mt-2 text-sm text-[var(--role-text)]/78">
               {mode === 'signin'
                 ? 'Access the Madison88 Budget Management System.'
@@ -329,7 +329,7 @@ const Login = () => {
                       placeholder="juan.dela.cruz"
                       value={emailHandle}
                       onChange={(e) => setEmailHandle(e.target.value.replace(/\s+/g, ''))}
-                      className="min-w-0 flex-1 bg-transparent text-white outline-none placeholder:text-[var(--role-text)]/40"
+                      className="min-w-0 flex-1 bg-transparent text-[var(--role-text)] outline-none placeholder:text-[var(--role-text)]/40"
                       required
                     />
                     <span className="shrink-0 text-sm text-[var(--role-text)]/70">@{COMPANY_EMAIL_DOMAIN}</span>
@@ -393,7 +393,7 @@ const Login = () => {
                       setShowForgotPassword((current) => !current);
                       setForgotEmail((current) => current || email);
                     }}
-                    className="text-xs font-medium text-[var(--role-secondary)] transition hover:text-white"
+                    className="text-xs font-medium text-[var(--role-secondary)] transition hover:text-[var(--role-primary)]"
                   >
                     Forgot password?
                   </button>
@@ -411,7 +411,7 @@ const Login = () => {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-4 text-[var(--role-text)]/60 transition hover:text-white"
+                  className="absolute inset-y-0 right-0 flex items-center pr-4 text-[var(--role-text)]/60 transition hover:text-[var(--role-primary)]"
                 >
                   {showPassword ? (
                     <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -428,7 +428,7 @@ const Login = () => {
             </div>
 
             {mode === 'signin' && showForgotPassword && (
-              <div className="rounded-2xl border border-[var(--role-secondary)]/22 bg-black/20 p-4">
+              <div className="rounded-2xl border border-[var(--role-secondary)]/22 bg-[var(--role-accent)] p-4">
                 <label className="field-label">Reset Email</label>
                 <input
                   type="email"
@@ -444,7 +444,7 @@ const Login = () => {
                   type="button"
                   onClick={() => void handleForgotPassword()}
                   disabled={isSendingReset}
-                  className="mt-4 w-full rounded-2xl border border-[var(--role-secondary)]/32 bg-[var(--role-secondary)]/14 px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--role-secondary)]/20 disabled:cursor-not-allowed disabled:opacity-70"
+                  className="mt-4 w-full rounded-2xl border border-[var(--role-secondary)]/32 bg-[var(--role-secondary)]/14 px-4 py-3 text-sm font-semibold text-[var(--role-primary)] transition hover:bg-[var(--role-secondary)]/20 disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {isSendingReset ? 'Sending reset link...' : 'Send Reset Link'}
                 </button>

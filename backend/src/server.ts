@@ -12,6 +12,7 @@ import projectRoutes from './routes/projects';
 import vendorRoutes from './routes/vendors';
 import slaRoutes from './routes/sla';
 import budgetAlertRoutes from './routes/budgetAlerts';
+import notificationRoutes from './routes/notifications';
 
 dotenv.config();
 
@@ -32,6 +33,7 @@ app.use('/api/projects', projectRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/sla', slaRoutes);
 app.use('/api/budget-alerts', budgetAlertRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 const PORT = process.env.PORT || 5000;
 

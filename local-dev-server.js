@@ -1887,7 +1887,7 @@ app.patch('/api/requests/:id/allocations', authenticate, authorize(['accounting'
 
     const { data: existingAllocations, error: existingAllocationsError } = await supabase
       .from('request_allocations')
-      .select('id, department_id, amount')
+      .select('id, department_id, amount, departments(name)')
       .eq('request_id', req.params.id);
     if (existingAllocationsError) return res.status(400).json({ error: existingAllocationsError });
 
@@ -1903,18 +1903,30 @@ app.patch('/api/requests/:id/allocations', authenticate, authorize(['accounting'
         created_by: req.user.id,
         updated_at: new Date()
       })))
-      .select('id, request_id, department_id, amount');
+      .select('id, request_id, department_id, amount, departments(name)');
     if (insertError) return res.status(400).json({ error: insertError });
 
-    const oldSummary = (existingAllocations || []).map((allocation) => `${allocation.department_id}:${toNumber(allocation.amount).toFixed(2)}`).join(', ') || 'none';
-    const newSummary = (savedAllocations || []).map((allocation) => `${allocation.department_id}:${toNumber(allocation.amount).toFixed(2)}`).join(', ');
+    const oldSummary = (existingAllocations || []).map((a) => `${a.departments?.name || a.department_id}:${toNumber(a.amount).toFixed(2)}`).sort().join(', ') || 'none';
+    const newSummary = (savedAllocations || []).map((a) => `${a.departments?.name || a.department_id}:${toNumber(a.amount).toFixed(2)}`).sort().join(', ');
 
-    await supabase.from('allocation_logs').insert({
-      request_id: req.params.id,
-      actor_id: req.user.id,
-      action: existingAllocations?.length ? 'reallocated' : 'allocated',
-      note: `Allocation updated from [${oldSummary}] to [${newSummary}]`
-    });
+    if (oldSummary !== newSummary) {
+      await supabase.from('allocation_logs').insert({
+        request_id: req.params.id,
+        actor_id: req.user.id,
+        action: existingAllocations?.length ? 'reallocated' : 'allocated',
+        note: `Allocation updated from [${oldSummary}] to [${newSummary}]`
+      });
+
+      await insertAuditLogs(req.params.id, req.user.id, [
+        {
+          entity_type: 'allocation',
+          action: existingAllocations?.length ? 'reallocated' : 'allocated',
+          old_value: oldSummary,
+          new_value: newSummary,
+          note: 'Department allocation updated'
+        }
+      ]);
+    }
 
     res.json(savedAllocations || []);
   } catch (error) {
@@ -2075,25 +2087,49 @@ app.get('/api/requests/:id/timeline', authenticate, async (req, res) => {
       return res.status(result.status).json({ error: result.error.message || result.error });
     }
 
-      const [approvalLogsResult, allocationLogsResult] = await Promise.all([
+      const [approvalLogsResult, allocationLogsResult, auditLogsResult, departmentsResult] = await Promise.all([
         supabase.from('approval_logs').select('*').eq('request_id', req.params.id),
-        supabase.from('allocation_logs').select('*').eq('request_id', req.params.id)
+        supabase.from('allocation_logs').select('*').eq('request_id', req.params.id),
+        supabase.from('request_audit_logs').select('*').eq('request_id', req.params.id),
+        supabase.from('departments').select('id, name')
       ]);
 
       if (approvalLogsResult.error) return res.status(400).json({ error: approvalLogsResult.error });
       if (allocationLogsResult.error) return res.status(400).json({ error: allocationLogsResult.error });
+      if (auditLogsResult.error) return res.status(400).json({ error: auditLogsResult.error });
+
+      const departmentMap = new Map((departmentsResult.data || []).map((d) => [String(d.id).toLowerCase(), d.name]));
+      const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+      const resolveNames = (text) => {
+        if (!text) return text;
+        const stringText = String(text);
+        return stringText.replace(uuidRegex, (match) => departmentMap.get(match.toLowerCase()) || match);
+      };
+
       const approvalLogs = (approvalLogsResult.data || []).map((log) => ({
         ...log,
+        note: resolveNames(log.note),
         event_time: log.timestamp,
         approval_side: log.stage === 'supervisor' ? 'supervisor' : ['accounting', 'finance'].includes(log.stage) ? 'accounting' : 'general'
       }));
       const allocationLogs = (allocationLogsResult.data || []).map((log) => ({
         ...log,
+        note: resolveNames(log.note),
         stage: 'allocation',
         event_time: log.created_at,
         approval_side: 'accounting'
       }));
-      const combinedLogs = [...approvalLogs, ...allocationLogs].sort(
+      const auditLogs = (auditLogsResult.data || []).map((log) => ({
+        ...log,
+        note: resolveNames(log.note),
+        old_value: resolveNames(log.old_value),
+        new_value: resolveNames(log.new_value),
+        stage: log.entity_type,
+        event_time: log.created_at,
+        approval_side: log.entity_type === 'request' ? 'general' : log.entity_type === 'liquidation' ? 'accounting' : 'general'
+      }));
+      const combinedLogs = [...approvalLogs, ...allocationLogs, ...auditLogs].sort(
         (left, right) => new Date(left.event_time).getTime() - new Date(right.event_time).getTime()
       );
 

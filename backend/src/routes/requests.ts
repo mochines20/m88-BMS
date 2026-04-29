@@ -307,7 +307,7 @@ router.get('/', authenticate, async (req: any, res) => {
 
 // POST /api/requests - submit new
 router.post('/', authenticate, authorize('employee'), async (req: any, res) => {
-  const { item_name, category, amount, purpose, priority, attachments = [] } = req.body;
+  const { item_name, category, amount, purpose, priority, attachments = [], metadata = {} } = req.body;
   const request_code = `REQ-${Date.now()}`;
   const activeDepartment = { id: req.user.department_id, fiscal_year: await getLatestConfiguredFiscalYear(supabase) };
   const normalizedAttachments = normalizeAttachments(attachments);
@@ -324,7 +324,8 @@ router.post('/', authenticate, authorize('employee'), async (req: any, res) => {
       purpose,
       priority,
       status: 'pending_supervisor',
-      submitted_at: new Date()
+      submitted_at: new Date(),
+      metadata
     })
     .select()
     .single();
@@ -483,7 +484,7 @@ router.patch('/:id/allocations', authenticate, authorize('accounting', 'admin'),
 
   const { data: existingAllocations, error: existingAllocationsError } = await supabase
     .from('request_allocations')
-    .select('id, department_id, amount')
+    .select('id, department_id, amount, departments(name)')
     .eq('request_id', id);
   if (existingAllocationsError) return res.status(400).json({ error: existingAllocationsError });
 
@@ -501,29 +502,31 @@ router.patch('/:id/allocations', authenticate, authorize('accounting', 'admin'),
         updated_at: new Date()
       }))
     )
-    .select('id, request_id, department_id, amount');
+    .select('id, request_id, department_id, amount, departments(name)');
 
   if (insertError) return res.status(400).json({ error: insertError });
 
-  const oldSummary = (existingAllocations || []).map((allocation) => `${allocation.department_id}:${toNumber(allocation.amount).toFixed(2)}`).join(', ') || 'none';
-  const newSummary = (savedAllocations || []).map((allocation) => `${allocation.department_id}:${toNumber(allocation.amount).toFixed(2)}`).join(', ');
+  const oldSummary = (existingAllocations || []).map((a: any) => `${a.departments?.name || a.department_id}:${toNumber(a.amount).toFixed(2)}`).sort().join(', ') || 'none';
+  const newSummary = (savedAllocations || []).map((a: any) => `${a.departments?.name || a.department_id}:${toNumber(a.amount).toFixed(2)}`).sort().join(', ');
 
-  await supabase.from('allocation_logs').insert({
-    request_id: id,
-    actor_id: req.user.id,
-    action: existingAllocations?.length ? 'reallocated' : 'allocated',
-    note: `Allocation updated from [${oldSummary}] to [${newSummary}]`
-  });
-
-  await insertAuditLogs(id, req.user.id, [
-    {
-      entity_type: 'allocation',
+  if (oldSummary !== newSummary) {
+    await supabase.from('allocation_logs').insert({
+      request_id: id,
+      actor_id: req.user.id,
       action: existingAllocations?.length ? 'reallocated' : 'allocated',
-      old_value: oldSummary,
-      new_value: newSummary,
-      note: 'Department allocation updated'
-    }
-  ]);
+      note: `Allocation updated from [${oldSummary}] to [${newSummary}]`
+    });
+
+    await insertAuditLogs(id, req.user.id, [
+      {
+        entity_type: 'allocation',
+        action: existingAllocations?.length ? 'reallocated' : 'allocated',
+        old_value: oldSummary,
+        new_value: newSummary,
+        note: 'Department allocation updated'
+      }
+    ]);
+  }
 
   res.json(savedAllocations || []);
 });
@@ -989,29 +992,44 @@ router.patch('/:id/liquidation/review', authenticate, authorize('accounting', 'a
 
 // GET /api/requests/:id/timeline
 router.get('/:id/timeline', authenticate, async (req: any, res) => {
-  const [approvalLogsResult, allocationLogsResult, auditLogsResult] = await Promise.all([
+  const [approvalLogsResult, allocationLogsResult, auditLogsResult, departmentsResult] = await Promise.all([
     supabase.from('approval_logs').select('*').eq('request_id', req.params.id),
     supabase.from('allocation_logs').select('*').eq('request_id', req.params.id),
-    supabase.from('request_audit_logs').select('*').eq('request_id', req.params.id)
+    supabase.from('request_audit_logs').select('*').eq('request_id', req.params.id),
+    supabase.from('departments').select('id, name')
   ]);
 
   if (approvalLogsResult.error) return res.status(400).json({ error: approvalLogsResult.error });
   if (allocationLogsResult.error) return res.status(400).json({ error: allocationLogsResult.error });
   if (auditLogsResult.error) return res.status(400).json({ error: auditLogsResult.error });
 
+  const departmentMap = new Map((departmentsResult.data || []).map((d: any) => [String(d.id).toLowerCase(), d.name]));
+    const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+    const resolveNames = (text: any) => {
+      if (!text) return text;
+      const stringText = String(text);
+      return stringText.replace(uuidRegex, (match) => departmentMap.get(match.toLowerCase()) || match);
+    };
+
   const approvalLogs = (approvalLogsResult.data || []).map((log: any) => ({
     ...log,
+    note: resolveNames(log.note),
     event_time: log.timestamp,
     approval_side: log.stage === 'supervisor' ? 'supervisor' : ['accounting', 'finance'].includes(log.stage) ? 'accounting' : 'general'
   }));
   const allocationLogs = (allocationLogsResult.data || []).map((log: any) => ({
     ...log,
+    note: resolveNames(log.note),
     stage: 'allocation',
     event_time: log.created_at,
     approval_side: 'accounting'
   }));
   const auditLogs = (auditLogsResult.data || []).map((log: any) => ({
     ...log,
+    note: resolveNames(log.note),
+    old_value: resolveNames(log.old_value),
+    new_value: resolveNames(log.new_value),
     stage: log.entity_type,
     event_time: log.created_at,
     approval_side: log.entity_type === 'request' ? 'general' : log.entity_type === 'liquidation' ? 'accounting' : 'general'

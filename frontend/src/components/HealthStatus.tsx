@@ -63,11 +63,11 @@ const HealthStatus = () => {
   };
 
   const getStatusColor = (status: string) => {
-    return status === 'healthy' ? 'text-green-400' : status === 'degraded' ? 'text-yellow-400' : 'text-red-400';
+    return status === 'healthy' ? 'text-emerald-600' : status === 'degraded' ? 'text-amber-600' : 'text-red-600';
   };
 
   const getStatusBg = (status: string) => {
-    return status === 'healthy' ? 'bg-green-500/10 border-green-500/20' : status === 'degraded' ? 'bg-yellow-500/10 border-yellow-500/20' : 'bg-red-500/10 border-red-500/20';
+    return status === 'healthy' ? 'bg-emerald-50 border-emerald-200' : status === 'degraded' ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200';
   };
 
   const formatUptime = (seconds: number) => {
@@ -79,8 +79,8 @@ const HealthStatus = () => {
   if (loading && !health) {
     return (
       <div className="animate-pulse space-y-4">
-        <div className="h-24 bg-white/5 rounded-lg"></div>
-        <div className="h-24 bg-white/5 rounded-lg"></div>
+        <div className="h-24 bg-[var(--role-accent)] rounded-lg"></div>
+        <div className="h-24 bg-[var(--role-accent)] rounded-lg"></div>
       </div>
     );
   }
@@ -91,29 +91,29 @@ const HealthStatus = () => {
         {/* Backend Status */}
         <div className={`border rounded-lg p-6 ${getStatusBg(health?.backend.status || 'unhealthy')}`}>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-white">Backend Server</h3>
-            <div className={`w-3 h-3 rounded-full ${health?.backend.status === 'healthy' ? 'bg-green-500' : health?.backend.status === 'degraded' ? 'bg-yellow-500' : 'bg-red-500'}`}></div>
+            <h3 className="text-lg font-semibold text-[var(--role-text)]">Backend Server</h3>
+            <div className={`w-3 h-3 rounded-full ${health?.backend.status === 'healthy' ? 'bg-emerald-500' : health?.backend.status === 'degraded' ? 'bg-amber-500' : 'bg-red-500'}`}></div>
           </div>
           <div className="space-y-2">
             <p className={`font-medium ${getStatusColor(health?.backend.status || 'unhealthy')}`}>
               {health?.backend.status === 'healthy' ? '✓ Running' : health?.backend.status === 'degraded' ? '⚠ Degraded' : '✗ Down'}
             </p>
-            <p className="text-sm text-white/70">Uptime: {formatUptime(health?.backend.uptime || 0)}</p>
+            <p className="text-sm text-[var(--role-text)]/70">Uptime: {formatUptime(health?.backend.uptime || 0)}</p>
           </div>
         </div>
 
         {/* Supabase Status */}
         <div className={`border rounded-lg p-6 ${getStatusBg(health?.supabase.status || 'unhealthy')}`}>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-white">Database (Supabase)</h3>
-            <div className={`w-3 h-3 rounded-full ${health?.supabase.status === 'healthy' ? 'bg-green-500' : 'bg-red-500'}`}></div>
+            <h3 className="text-lg font-semibold text-[var(--role-text)]">Database (Supabase)</h3>
+            <div className={`w-3 h-3 rounded-full ${health?.supabase.status === 'healthy' ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
           </div>
           <div className="space-y-2">
             <p className={`font-medium ${getStatusColor(health?.supabase.status || 'unhealthy')}`}>
               {health?.supabase.status === 'healthy' ? '✓ Connected' : '✗ Disconnected'}
             </p>
             {health?.supabase.error && (
-              <p className="text-sm text-red-300">{health.supabase.error}</p>
+              <p className="text-sm text-red-600">{health.supabase.error}</p>
             )}
           </div>
         </div>
@@ -121,25 +121,25 @@ const HealthStatus = () => {
 
       {/* System Counts */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-          <p className="text-sm text-white/60 mb-2">Departments</p>
-          <p className="text-2xl font-bold text-white">{health?.counts.departments || 0}</p>
+        <div className="bg-[var(--bms-bg-1)] border border-[var(--role-border)] rounded-lg p-4">
+          <p className="text-sm text-[var(--role-text)]/60 mb-2">Departments</p>
+          <p className="text-2xl font-bold text-[var(--role-text)]">{health?.counts.departments || 0}</p>
         </div>
-        <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-          <p className="text-sm text-white/60 mb-2">Users</p>
-          <p className="text-2xl font-bold text-white">{health?.counts.users || 0}</p>
+        <div className="bg-[var(--bms-bg-1)] border border-[var(--role-border)] rounded-lg p-4">
+          <p className="text-sm text-[var(--role-text)]/60 mb-2">Users</p>
+          <p className="text-2xl font-bold text-[var(--role-text)]">{health?.counts.users || 0}</p>
         </div>
-        <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-          <p className="text-sm text-white/60 mb-2">Requests</p>
-          <p className="text-2xl font-bold text-white">{health?.counts.requests || 0}</p>
+        <div className="bg-[var(--bms-bg-1)] border border-[var(--role-border)] rounded-lg p-4">
+          <p className="text-sm text-[var(--role-text)]/60 mb-2">Requests</p>
+          <p className="text-2xl font-bold text-[var(--role-text)]">{health?.counts.requests || 0}</p>
         </div>
-        <div className="bg-white/5 border border-white/10 rounded-lg p-4">
-          <p className="text-sm text-white/60 mb-2">Expenses</p>
-          <p className="text-2xl font-bold text-white">{health?.counts.expenses || 0}</p>
+        <div className="bg-[var(--bms-bg-1)] border border-[var(--role-border)] rounded-lg p-4">
+          <p className="text-sm text-[var(--role-text)]/60 mb-2">Expenses</p>
+          <p className="text-2xl font-bold text-[var(--role-text)]">{health?.counts.expenses || 0}</p>
         </div>
       </div>
 
-      <p className="text-xs text-white/40">
+      <p className="text-xs text-[var(--role-text)]/40">
         Last checked: {lastCheckTime?.toLocaleTimeString()}
       </p>
     </div>

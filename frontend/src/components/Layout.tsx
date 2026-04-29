@@ -128,7 +128,7 @@ const Layout = ({ children }: LayoutProps) => {
           <div className="mx-auto mb-5 flex items-center justify-center">
             <div className="bms-spinner" />
           </div>
-          <p className="text-xl font-semibold text-white">Loading BMS Workspace</p>
+          <p className="text-xl font-semibold text-[var(--role-text)]">Loading BMS Workspace</p>
           <p className="mt-2 text-sm text-[var(--role-text)]/70">Securing access, syncing roles, and preparing your dashboard.</p>
           <div className="mt-6 space-y-3">
             <div className="bms-shimmer h-3 w-full rounded-full" />
@@ -149,52 +149,52 @@ const Layout = ({ children }: LayoutProps) => {
             <img
               src="/madison88-logo.png"
               alt="Madison88"
-              className="h-12 w-auto rounded-xl border border-white/15 bg-[#f8fbff] px-3 py-2 shadow-[0_10px_30px_rgba(0,0,0,0.24)]"
+              className="h-12 w-auto rounded-xl border border-black/5 bg-white px-3 py-2 shadow-[0_8px_20px_rgba(0,0,0,0.06)]"
             />
             <div className="flex flex-col">
-              <p className="text-sm font-bold text-white flex items-center gap-2">
+              <p className="text-sm font-bold text-[var(--role-text)] flex items-center gap-2">
                 <span className="opacity-70">{getRoleIcon(user.role)}</span>
                 {getRoleLabel(user.role)}
               </p>
-              <p className="text-xs text-slate-400">Welcome, {normalizeDisplayName(user.name)}</p>
+              <p className="text-xs text-[var(--bms-muted)]">Welcome, {normalizeDisplayName(user.name)}</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setShowNotifications(!showNotifications)}
-                className="relative rounded-full border border-[var(--role-border)] bg-black/20 p-2.5 transition hover:bg-black/30"
+                className="relative rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] p-2.5 transition hover:bg-[var(--role-accent)]/80"
               >
-                <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="h-5 w-5 text-[var(--role-primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
                 </svg>
                 {notifications.filter(n => !n.is_read).length > 0 && (
-                  <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                  <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white shadow-sm">
                     {notifications.filter(n => !n.is_read).length}
                   </span>
                 )}
               </button>
               {showNotifications && (
-                <div className="absolute right-4 top-20 z-50 w-80 max-h-96 overflow-y-auto rounded-2xl border border-[var(--role-border)] bg-[var(--bms-bg-2)] shadow-2xl">
-                  <div className="sticky top-0 flex items-center justify-between border-b border-white/10 bg-[var(--bms-bg-2)] p-4">
-                    <h3 className="font-bold text-white">Notifications</h3>
-                    <button onClick={() => setShowNotifications(false)} className="text-white/60 hover:text-white">
+                <div className="absolute right-4 top-20 z-50 w-80 max-h-96 overflow-y-auto rounded-2xl border border-[var(--role-border)] bg-white shadow-[0_20px_50px_rgba(0,0,0,0.15)]">
+                  <div className="sticky top-0 flex items-center justify-between border-b border-black/5 bg-white p-4">
+                    <h3 className="font-bold text-[var(--role-text)]">Notifications</h3>
+                    <button onClick={() => setShowNotifications(false)} className="text-[var(--role-text)]/40 hover:text-[var(--role-text)]">
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                       </svg>
                     </button>
                   </div>
-                  <div className="divide-y divide-white/5">
+                  <div className="divide-y divide-black/5">
                     {notifications.length === 0 ? (
-                      <p className="p-4 text-center text-white/60">No notifications yet</p>
+                      <p className="p-4 text-center text-[var(--bms-muted)]">No notifications yet</p>
                     ) : (
                       notifications.slice(0, 10).map((notification: any) => (
                         <div
                           key={notification.id}
-                          className={`p-4 transition hover:bg-white/5 ${!notification.is_read ? 'bg-white/5' : ''}`}
+                          className={`p-4 transition hover:bg-black/5 ${!notification.is_read ? 'bg-[var(--role-accent)]/30' : ''}`}
                         >
-                          <p className="text-sm text-white">{notification.message}</p>
-                          <p className="mt-1 text-xs text-white/50">{notification.created_at ? new Date(notification.created_at).toLocaleString() : 'Just now'}</p>
+                          <p className="text-sm text-[var(--role-text)]">{notification.message}</p>
+                          <p className="mt-1 text-xs text-[var(--bms-muted)]">{notification.created_at ? new Date(notification.created_at).toLocaleString() : 'Just now'}</p>
                         </div>
                       ))
                     )}
@@ -213,7 +213,7 @@ const Layout = ({ children }: LayoutProps) => {
                 <Link to="/approvals" className={`${getNavClassName('/approvals')} relative`}>
                   {user.role === 'supervisor' ? 'Team Approvals' : 'Fund Releases'}
                   {pendingApprovalsCount > 0 && (
-                    <span className="ml-2 inline-flex min-w-[22px] items-center justify-center rounded-full border border-white/20 bg-white/10 px-1.5 py-0.5 text-xs font-semibold text-white">
+                    <span className="ml-2 inline-flex min-w-[22px] items-center justify-center rounded-full border border-[var(--role-primary)]/20 bg-[var(--role-primary)]/10 px-1.5 py-0.5 text-xs font-semibold text-[var(--role-primary)]">
                       {pendingApprovalsCount}
                     </span>
                   )}
