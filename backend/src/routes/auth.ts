@@ -8,6 +8,7 @@ import { sendEmail } from '../utils/email';
 import {
   CANONICAL_DEPARTMENTS,
   COMPANY_EMAIL_DOMAIN,
+  getAccessibleDepartmentIdsForUser,
   getLatestConfiguredFiscalYear,
   normalizeDepartmentKey,
   normalizeDepartmentName,
@@ -438,6 +439,14 @@ router.patch('/profile', authenticate, async (req: any, res) => {
     return res.status(400).json({ error: departmentError || 'Selected department was not found.' });
   }
 
+  if (req.user.role === 'employee' || req.user.role === 'supervisor') {
+    const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
+    const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
+    if (!accessibleDepartmentIds.includes(department.id)) {
+      return res.status(403).json({ error: 'You are not allowed to change to that department.' });
+    }
+  }
+
   const { data: updatedUser, error } = await supabase
     .from('users')
     .update({
@@ -678,10 +687,23 @@ router.get('/me', authenticate, async (req: any, res) => {
     user.department_id,
     await getLatestConfiguredFiscalYear(supabase)
   );
+  
+  // Fetch department name for display
+  let departmentName = null;
+  if (activeDepartment?.id || user.department_id) {
+    const { data: dept } = await supabase
+      .from('departments')
+      .select('name')
+      .eq('id', activeDepartment?.id || user.department_id)
+      .single();
+    departmentName = dept?.name;
+  }
+  
   res.json({
     ...user,
     department_id: activeDepartment?.id || user.department_id,
-    fiscal_year: activeDepartment?.fiscal_year ?? null
+    fiscal_year: activeDepartment?.fiscal_year ?? null,
+    department: departmentName ? { name: departmentName } : null
   });
 });
 

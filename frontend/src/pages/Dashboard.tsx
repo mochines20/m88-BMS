@@ -282,7 +282,35 @@ const Dashboard = () => {
       value
     })).sort((a, b) => b.value - a.value);
 
-    return { utilizationData, categoryData };
+    // Monthly Spending Trends (last 6 months)
+    const monthlyMap = new Map();
+    const now = new Date();
+    
+    // Initialize last 6 months with 0
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = d.toLocaleString('default', { month: 'short', year: '2-digit' });
+      monthlyMap.set(key, 0);
+    }
+    
+    // Aggregate released/approved requests by month
+    requests.forEach((req: any) => {
+      if (req.status === 'released' || req.status === 'approved') {
+        const date = new Date(req.released_at || req.updated_at || req.created_at);
+        const monthKey = date.toLocaleString('default', { month: 'short', year: '2-digit' });
+        if (monthlyMap.has(monthKey)) {
+          monthlyMap.set(monthKey, monthlyMap.get(monthKey) + toNumber(req.amount));
+        }
+      }
+    });
+
+    const monthlyData = Array.from(monthlyMap.entries()).map(([name, value]) => ({
+      name,
+      value,
+      formatted: formatMoney(value)
+    }));
+
+    return { utilizationData, categoryData, monthlyData };
   }, [requests]);
 
   const COLORS = ['#10B981', '#EF4444', '#F59E0B', '#3B82F6', '#8B5CF6', '#EC4899'];
@@ -676,6 +704,58 @@ const Dashboard = () => {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Monthly Spending Trends - Full Width */}
+      {user.role !== 'employee' && user.role !== 'super_admin' && (
+        <div className="mb-8 panel">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-bold text-[var(--role-text)]">Monthly Spending Trends</h2>
+            <span className="text-xs uppercase tracking-wider text-[var(--role-text)]/50 font-bold">Last 6 Months</span>
+          </div>
+          <div className="h-[250px] w-full">
+            {chartData.monthlyData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData.monthlyData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--role-border)" />
+                  <XAxis 
+                    dataKey="name" 
+                    stroke="var(--role-text)" 
+                    fontSize={12} 
+                    tickLine={false} 
+                    axisLine={false} 
+                  />
+                  <YAxis 
+                    stroke="var(--role-text)" 
+                    fontSize={12} 
+                    tickLine={false} 
+                    axisLine={false} 
+                    tickFormatter={(value) => `₱${value >= 1000 ? (value / 1000).toFixed(0) + 'k' : value}`}
+                  />
+                  <Tooltip 
+                    formatter={(value: number) => formatMoney(value)}
+                    contentStyle={{ backgroundColor: 'var(--role-surface)', borderColor: 'var(--role-border)', borderRadius: '12px' }}
+                  />
+                  <Bar 
+                    dataKey="value" 
+                    fill="url(#monthlyGradient)" 
+                    radius={[4, 4, 0, 0]}
+                  />
+                  <defs>
+                    <linearGradient id="monthlyGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--role-primary)" />
+                      <stop offset="100%" stopColor="var(--role-secondary)" />
+                    </linearGradient>
+                  </defs>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center text-[var(--role-text)]/50">
+                No spending data available
+              </div>
+            )}
           </div>
         </div>
       )}

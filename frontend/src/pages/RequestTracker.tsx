@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import toast from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import FilePreviewer from '../components/FilePreviewer';
 import { formatMoney, toNumber } from '../utils/format';
+import jsPDF from 'jspdf';
 
 const getStatusLabel = (status: string) => {
   switch (status) {
@@ -64,6 +66,7 @@ const buildFlow = (status: string) => [
 ];
 
 const RequestTracker = () => {
+  const navigate = useNavigate();
   const [requests, setRequests] = useState<any[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
   const [liquidationDraft, setLiquidationDraft] = useState({ actual_amount: '', remarks: '', file_url: '' });
@@ -243,6 +246,80 @@ const RequestTracker = () => {
     }
   };
 
+  const downloadVoucher = (req: any) => {
+    const doc = new jsPDF();
+    
+    // Add Logo or Header
+    doc.setFillColor(30, 43, 74);
+    doc.rect(0, 0, 210, 40, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(22);
+    doc.text('BUDGET REQUEST VOUCHER', 105, 25, { align: 'center' });
+    
+    // Add Content
+    doc.setTextColor(20, 20, 20);
+    doc.setFontSize(10);
+    doc.text(`Voucher Date: ${new Date().toLocaleDateString()}`, 14, 50);
+    doc.text(`Request Code: ${req.request_code}`, 14, 55);
+    
+    doc.setDrawColor(200, 200, 200);
+    doc.line(14, 62, 196, 62);
+    
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('REQUEST DETAILS', 14, 72);
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text('Item Name:', 14, 82);
+    doc.text(req.item_name, 60, 82);
+    
+    doc.text('Category:', 14, 88);
+    doc.text(req.category, 60, 88);
+    
+    doc.text('Amount:', 14, 94);
+    doc.text(`PHP ${Number(req.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 60, 94);
+    
+    doc.text('Department:', 14, 100);
+    doc.text(req.department_name || 'N/A', 60, 100);
+    
+    doc.text('Priority:', 14, 106);
+    doc.text(req.priority.toUpperCase(), 60, 106);
+    
+    doc.text('Purpose:', 14, 112);
+    const splitPurpose = doc.splitTextToSize(req.purpose || 'No purpose provided.', 130);
+    doc.text(splitPurpose, 60, 112);
+    
+    // Approval Section
+    const approvalY = 112 + (splitPurpose.length * 5) + 15;
+    doc.setFont('helvetica', 'bold');
+    doc.text('APPROVAL STATUS', 14, approvalY);
+    
+    doc.setFont('helvetica', 'normal');
+    doc.text('Current Status:', 14, approvalY + 10);
+    doc.setTextColor(16, 185, 129); // Emerald color
+    doc.text(getStatusLabel(req.status).toUpperCase(), 60, approvalY + 10);
+    
+    doc.setTextColor(20, 20, 20);
+    doc.text('Approval Date:', 14, approvalY + 16);
+    doc.text(req.updated_at ? new Date(req.updated_at).toLocaleString() : 'N/A', 60, approvalY + 16);
+    
+    // Footer / Signatures
+    doc.setDrawColor(200, 200, 200);
+    doc.line(14, 250, 80, 250);
+    doc.line(130, 250, 196, 250);
+    doc.setFontSize(8);
+    doc.text('Requested By', 47, 255, { align: 'center' });
+    doc.text('Approved By (System Verified)', 163, 255, { align: 'center' });
+    
+    doc.setFontSize(7);
+    doc.setTextColor(150, 150, 150);
+    doc.text('This is a system-generated document. No signature required if status is APPROVED/RELEASED.', 105, 285, { align: 'center' });
+    
+    doc.save(`Voucher_${req.request_code}.pdf`);
+    toast.success('Voucher downloaded successfully!');
+  };
+
   return (
     <div className="text-[var(--role-text)]">
       <div className="page-header">
@@ -382,7 +459,20 @@ const RequestTracker = () => {
                 <h2 className="text-2xl font-bold text-[var(--role-text)]">{selectedRequest.item_name}</h2>
                 <p className="mt-2 text-[var(--role-text)]/70">{getStatusLabel(selectedRequest.status)}</p>
               </div>
-              <span className="badge ${getStatusColor(selectedRequest.status)}">{getStatusLabel(selectedRequest.status)}</span>
+              <div className="flex flex-col items-end gap-2">
+                <span className={`badge ${getStatusColor(selectedRequest.status)}`}>{getStatusLabel(selectedRequest.status)}</span>
+                {(selectedRequest.status === 'approved' || selectedRequest.status === 'released') && (
+                  <button 
+                    onClick={() => downloadVoucher(selectedRequest)}
+                    className="btn-primary !py-1.5 !px-3 text-xs flex items-center gap-2"
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Download Voucher
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -528,8 +618,14 @@ const RequestTracker = () => {
                 <p className="text-xs uppercase tracking-[0.16em] text-orange-600 font-bold">Return Reason</p>
                 <p className="mt-2 text-orange-700 font-medium">{selectedRequest.return_reason}</p>
                 <p className="mt-2 text-xs text-orange-600/70">Revision count: {selectedRequest.revision_count || 0}</p>
-                <button className="btn-primary mt-4 w-full" onClick={() => void resubmitRequest()}>
-                  Resubmit Request
+                <button 
+                  className="btn-primary mt-4 w-full bg-orange-600 border-orange-600 hover:bg-orange-700 flex items-center justify-center gap-2" 
+                  onClick={() => navigate(`/request/edit/${selectedRequest.id}`)}
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  Edit & Resubmit
                 </button>
               </div>
             )}

@@ -1292,12 +1292,13 @@ app.get('/api/requests', authenticate, async (req, res) => {
   }
 });
 
-app.post('/api/requests', authenticate, authorize(['employee']), async (req, res) => {
+app.post('/api/requests', authenticate, authorize(['employee', 'supervisor', 'accounting']), async (req, res) => {
   try {
     const { item_name, category, amount, purpose, priority } = req.body;
     const normalizedAmount = toNumber(amount);
     const activeFiscalYear = await getLatestConfiguredFiscalYear();
     const activeDepartment = await syncUserDepartmentToActiveYear(req.user.id, req.user.department_id, activeFiscalYear);
+    const userRole = req.user.role;
 
     if (!item_name || !category || !purpose) {
       return res.status(400).json({ error: 'Item name, category, and purpose are required' });
@@ -1311,6 +1312,9 @@ app.post('/api/requests', authenticate, authorize(['employee']), async (req, res
       return res.status(400).json({ error: 'Your department is not configured for the active fiscal year yet.' });
     }
 
+    // Determine initial status based on user role
+    // Employee -> pending_supervisor, Supervisor/Accounting -> pending_accounting (skip supervisor)
+    const initialStatus = userRole === 'employee' ? 'pending_supervisor' : 'pending_accounting';
     const request_code = `REQ-${Date.now()}`;
 
     const { data, error } = await supabase
@@ -1325,7 +1329,7 @@ app.post('/api/requests', authenticate, authorize(['employee']), async (req, res
         amount: normalizedAmount,
         purpose,
         priority,
-        status: 'pending_supervisor',
+        status: initialStatus,
         submitted_at: new Date()
       })
       .select()
@@ -1333,24 +1337,40 @@ app.post('/api/requests', authenticate, authorize(['employee']), async (req, res
 
     if (error) return res.status(400).json({ error });
 
+    // Log the submission
     await supabase.from('approval_logs').insert({
       request_id: data.id,
       actor_id: req.user.id,
       action: 'submitted',
-      stage: 'supervisor',
-      note: 'Request submitted'
+      stage: userRole === 'employee' ? 'supervisor' : 'accounting',
+      note: userRole === 'employee' ? 'Request submitted' : `Request submitted by ${userRole} (routed directly to accounting)`
     });
 
-    // Notify supervisors of the department
-    const { data: supervisors } = await supabase
-      .from('users')
-      .select('id')
-      .eq('department_id', activeDepartment.id)
-      .eq('role', 'supervisor');
+    // Notify based on role
+    if (userRole === 'employee') {
+      // Notify supervisors of the department
+      const { data: supervisors } = await supabase
+        .from('users')
+        .select('id')
+        .eq('department_id', activeDepartment.id)
+        .eq('role', 'supervisor');
 
-    if (supervisors) {
-      for (const supervisor of supervisors) {
-        await createNotification(supervisor.id, `New budget request from ${req.user.name}: ${item_name} (₱${normalizedAmount})`);
+      if (supervisors) {
+        for (const supervisor of supervisors) {
+          await createNotification(supervisor.id, `New budget request from ${req.user.name}: ${item_name} (₱${normalizedAmount})`);
+        }
+      }
+    } else {
+      // Supervisor or Accounting submitting - notify accounting staff
+      const { data: accountingStaff } = await supabase
+        .from('users')
+        .select('id')
+        .eq('role', 'accounting');
+
+      if (accountingStaff) {
+        for (const accountant of accountingStaff) {
+          await createNotification(accountant.id, `New direct request from ${userRole} ${req.user.name}: ${item_name} (₱${normalizedAmount}) - Requires accounting review`);
+        }
       }
     }
 
@@ -2099,7 +2119,8 @@ app.patch('/api/requests/:id/return', authenticate, authorize(['supervisor', 'ac
 
 app.patch('/api/requests/:id/resubmit', authenticate, authorize(['employee']), async (req, res) => {
   try {
-    const purpose = String(req.body?.purpose || '').trim();
+    const { item_name, amount, category, priority, purpose: bodyPurpose } = req.body || {};
+    const purpose = String(bodyPurpose || '').trim();
     const result = await getRequestForUser(req.params.id, req.user);
     if (result.error) {
       return res.status(result.status).json({ error: result.error.message || result.error });
@@ -2113,10 +2134,18 @@ app.patch('/api/requests/:id/resubmit', authenticate, authorize(['employee']), a
       return res.status(400).json({ error: 'Only returned requests can be resubmitted.' });
     }
 
+    // Handle amount update properly (0 is a valid amount)
+    const normalizedAmount = amount !== undefined && amount !== null ? Number(amount) : undefined;
+    const newAmount = normalizedAmount !== undefined && !isNaN(normalizedAmount) ? normalizedAmount : request.amount;
+
     const { data, error } = await supabase
       .from('expense_requests')
       .update({
         status: 'pending_supervisor',
+        item_name: item_name !== undefined ? String(item_name) : request.item_name,
+        amount: newAmount,
+        category: category !== undefined ? String(category) : request.category,
+        priority: priority !== undefined ? String(priority).toLowerCase() || 'normal' : request.priority,
         purpose: purpose || request.purpose,
         submitted_at: new Date(),
         returned_by: null,

@@ -20,6 +20,7 @@ const Profile = () => {
   const [departmentId, setDepartmentId] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingDepartments, setIsLoadingDepartments] = useState(true);
 
   const token = localStorage.getItem('token');
   const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
@@ -36,8 +37,10 @@ const Profile = () => {
         setName(normalizeDisplayName(meResponse.data.name || ''));
         setDepartmentId(meResponse.data.department_id || '');
         setDepartments(departmentsResponse.data || []);
+        setIsLoadingDepartments(false);
       } catch (err: any) {
         toast.error(err.response?.data?.error || 'Failed to load profile');
+        setIsLoadingDepartments(false);
       } finally {
         setIsLoading(false);
       }
@@ -138,14 +141,25 @@ const Profile = () => {
 
           <div>
             <label className="field-label">Department</label>
-            <select className="field-input" value={departmentId} onChange={(event) => setDepartmentId(event.target.value)}>
-              <option value="">Select your department</option>
+            <select 
+              className="field-input" 
+              value={departmentId} 
+              onChange={(event) => setDepartmentId(event.target.value)}
+              disabled={isLoadingDepartments}
+            >
+              <option value="">{isLoadingDepartments ? 'Loading departments...' : 'Select your department'}</option>
               {departments.map((department) => (
                 <option key={department.id} value={department.id}>
                   {department.name}
                 </option>
               ))}
             </select>
+            {user?.department?.name && (
+              <p className="mt-2 text-xs text-[var(--role-text)]/60">
+                Current department: <span className="font-medium">{user.department.name}</span>. 
+                You can only view and create requests for your assigned department.
+              </p>
+            )}
           </div>
 
           <div className="flex flex-wrap gap-3">

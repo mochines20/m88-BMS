@@ -2,7 +2,7 @@ import express from 'express';
 import { authenticate, authorize } from '../middleware/auth';
 import { supabase } from '../utils/supabase';
 import { buildDepartmentBudgetSummaryMap, fetchRequestAllocationsByRequestId, isBudgetCommittedStatus, normalizeAllocations } from '../utils/budget';
-import { ensureDepartmentsForFiscalYear, toCanonicalDepartmentName } from '../utils/fiscal';
+import { ensureDepartmentsForFiscalYear, toCanonicalDepartmentName, getAccessibleDepartmentIdsForUser, getLatestConfiguredFiscalYear } from '../utils/fiscal';
 
 const router = express.Router();
 
@@ -10,8 +10,23 @@ const toNumber = (value: any) => Number.parseFloat(value ?? 0) || 0;
 const normalizeDepartmentName = (value: string) => String(value || '').trim();
 
 // GET /api/departments
-router.get('/', authenticate, async (_req: any, res) => {
-  const { data: departments, error } = await supabase.from('departments').select('*');
+router.get('/', authenticate, async (req: any, res) => {
+  let departmentQuery = supabase.from('departments').select('*');
+
+  if (req.user.role === 'employee' || req.user.role === 'supervisor') {
+    const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
+    const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
+
+    if (accessibleDepartmentIds.length > 0) {
+      departmentQuery = departmentQuery.in('id', accessibleDepartmentIds);
+    } else if (req.user.department_id) {
+      departmentQuery = departmentQuery.eq('id', req.user.department_id);
+    } else {
+      return res.json([]);
+    }
+  }
+
+  const { data: departments, error } = await departmentQuery;
   if (error) return res.status(400).json({ error });
 
   try {

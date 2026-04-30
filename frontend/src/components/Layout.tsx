@@ -190,8 +190,8 @@ const Layout = ({ children }: LayoutProps) => {
               <p className="text-xs text-[var(--bms-muted)]">Welcome, {normalizeDisplayName(user.name)}</p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-1">
+            <div className="flex flex-wrap gap-1">
               <button
                 onClick={() => setShowNotifications(!showNotifications)}
                 className="relative rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] p-2.5 transition hover:bg-[var(--role-accent)]/80"
@@ -241,20 +241,26 @@ const Layout = ({ children }: LayoutProps) => {
                 </>
               )}
               {(user.role === 'supervisor' || user.role === 'accounting') && (
-                <Link to="/approvals" className={`${getNavClassName('/approvals')} relative`}>
-                  {user.role === 'supervisor' ? 'Team Approvals' : 'Fund Releases'}
-                  {pendingApprovalsCount > 0 && (
-                    <span className="ml-2 inline-flex min-w-[22px] items-center justify-center rounded-full border border-[var(--role-primary)]/20 bg-[var(--role-primary)]/10 px-1.5 py-0.5 text-xs font-semibold text-[var(--role-primary)]">
-                      {pendingApprovalsCount}
-                    </span>
-                  )}
-                </Link>
+                <>
+                  <Link to="/request" className={getNavClassName('/request')}>New Request</Link>
+                  <Link to="/approvals" className={`${getNavClassName('/approvals')} relative`}>
+                    {user.role === 'supervisor' ? 'Team Approvals' : 'Fund Releases'}
+                    {pendingApprovalsCount > 0 && (
+                      <span className="ml-1.5 inline-flex h-5 min-w-[18px] items-center justify-center rounded-full border border-[var(--role-primary)]/20 bg-[var(--role-primary)]/10 px-1 text-[10px] font-semibold text-[var(--role-primary)]">
+                        {pendingApprovalsCount}
+                      </span>
+                    )}
+                  </Link>
+                </>
               )}
               {user.role !== 'employee' && user.role !== 'super_admin' && (
                 <Link to="/reports" className={getNavClassName('/reports')}>Analytics</Link>
               )}
-              {(user.role === 'management' || user.role === 'admin' || user.role === 'accounting' || user.role === 'super_admin') && (
+              {(user.role === 'management' || user.role === 'admin' || user.role === 'super_admin') && (
                 <Link to="/management" className={getNavClassName('/management')}>Management</Link>
+              )}
+              {(user.role === 'admin' || user.role === 'accounting') && (
+                <Link to="/accounting" className={getNavClassName('/accounting')}>Accounting</Link>
               )}
               {(user.role === 'admin' || user.role === 'accounting' || user.role === 'super_admin') && (
                 <Link to="/admin" className={getNavClassName('/admin')}>

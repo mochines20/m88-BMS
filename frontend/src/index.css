@@ -24,6 +24,12 @@
     font-family: 'Plus Jakarta Sans', sans-serif;
     background-color: var(--bms-bg-1);
     color: var(--role-text);
+    scroll-behavior: smooth;
+  }
+
+  /* Smooth scrolling for the whole page */
+  * {
+    scroll-behavior: smooth;
   }
 
   [data-role="supervisor"] {
@@ -163,13 +169,13 @@
   }
 
   .nav-link {
-    @apply inline-flex items-center rounded-full border px-4 py-2 text-sm font-medium text-[var(--role-text)] transition;
+    @apply inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium text-[var(--role-text)] transition whitespace-nowrap;
     border-color: var(--role-border);
     background-color: rgba(255, 255, 255, 0.5);
   }
 
   .nav-link-accent {
-    @apply inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold text-white transition;
+    @apply inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-semibold text-white transition whitespace-nowrap;
     border-color: var(--role-secondary);
     background-color: var(--role-primary);
   }
@@ -499,8 +505,339 @@
   0% {
     background-position: 0% 50%;
   }
-
   100% {
     background-position: 100% 50%;
   }
 }
+
+/* Enhanced Animations & Smooth Interactions */
+
+/* Card entrance animation for lists */
+@keyframes cardEnter {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Stagger animation for list items */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(15px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Smooth modal/dialog animation */
+@keyframes modalEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes modalBackdrop {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Toast notification animation */
+@keyframes toastSlide {
+  from {
+    opacity: 0;
+    transform: translateX(100%) translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) translateY(0);
+  }
+}
+
+/* Button press effect */
+@keyframes buttonPress {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0.96);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Loading skeleton pulse */
+@keyframes skeletonPulse {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+/* Float animation for emphasis */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+/* Utility Classes for Animations */
+.animate-toast {
+    animation: toastSlide 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  .animate-skeleton {
+    animation: skeletonPulse 1.5s ease-in-out infinite;
+  }
+
+  /* Stagger delay utilities */
+  .stagger-1 { animation-delay: 50ms; }
+  .stagger-2 { animation-delay: 100ms; }
+  .stagger-3 { animation-delay: 150ms; }
+  .stagger-4 { animation-delay: 200ms; }
+  .stagger-5 { animation-delay: 250ms; }
+  .stagger-6 { animation-delay: 300ms; }
+  .stagger-7 { animation-delay: 350ms; }
+  .stagger-8 { animation-delay: 400ms; }
+
+  /* Smooth transitions for interactive elements */
+  .transition-smooth {
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .transition-bounce {
+    transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  /* Button interactions */
+  .btn-interactive {
+    transition: transform 0.15s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  }
+
+  .btn-interactive:active {
+    transform: scale(0.97);
+  }
+
+  /* Card lift effect */
+  .card-lift {
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), 
+                box-shadow 0.3s ease,
+                border-color 0.2s ease;
+  }
+
+  .card-lift:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 40px -12px rgba(27, 67, 50, 0.25);
+  }
+
+  /* Input focus glow */
+  .input-glow {
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  }
+
+  .input-glow:focus {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px -4px rgba(212, 163, 115, 0.3);
+  }
+
+  /* Smooth list item hover */
+  .list-item-hover {
+    transition: background-color 0.2s ease, padding-left 0.2s ease;
+  }
+
+  .list-item-hover:hover {
+    padding-left: 8px;
+    background-color: rgba(27, 67, 50, 0.04);
+  }
+
+  /* Page transition wrapper */
+  .page-transition {
+    animation: pageEnter 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* Loading state animations */
+  .loading-dots::after {
+    content: '';
+    animation: loadingDots 1.5s infinite;
+  }
+
+  @keyframes loadingDots {
+    0%, 20% {
+      content: '.';
+    }
+    40% {
+      content: '..';
+    }
+    60%, 100% {
+      content: '...';
+    }
+  }
+
+  /* Hover scale for icons */
+  .icon-hover {
+    transition: transform 0.2s ease, color 0.2s ease;
+  }
+
+  .icon-hover:hover {
+    transform: scale(1.15) rotate(5deg);
+  }
+
+  /* Smooth dropdown/menu */
+  .dropdown-enter {
+    animation: modalEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    transform-origin: top center;
+  }
+
+  /* Gradient border animation */
+  .gradient-border {
+    position: relative;
+    background: linear-gradient(white, white) padding-box,
+                linear-gradient(90deg, var(--role-primary), var(--role-secondary), var(--role-primary)) border-box;
+    background-size: 200% 100%;
+    border: 2px solid transparent;
+    animation: gradientShift 3s linear infinite;
+  }
+
+  @keyframes gradientShift {
+    0% {
+      background-position: 0% 50%;
+    }
+    100% {
+      background-position: 200% 50%;
+    }
+  }
+
+  /* Ripple effect for buttons */
+  .ripple {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .ripple::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    transition: width 0.6s ease, height 0.6s ease;
+  }
+
+  .ripple:active::after {
+    width: 300px;
+    height: 300px;
+  }
+
+  @keyframes navDrop {
+    from {
+      opacity: 0;
+      transform: translateY(-16px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes pageEnter {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes pageStage {
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes riseIn {
+    from {
+      opacity: 0;
+      transform: translateY(22px) scale(0.985);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes pulseOrb {
+    0%, 100% {
+      opacity: 0.55;
+      transform: scale(0.92);
+      box-shadow: 0 0 0 0 rgba(233, 196, 106, 0.08);
+    }
+
+    50% {
+      opacity: 1;
+      transform: scale(1);
+      box-shadow: 0 0 0 16px rgba(233, 196, 106, 0);
+    }
+  }
+
+  @keyframes appAmbient {
+    from {
+      background-position: 0% 0%, 100% 100%, 50% 50%;
+    }
+
+    to {
+      background-position: 4% 0%, 96% 100%, 50% 52%;
+    }
+  }
+
+  @keyframes spinSlow {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: 0% 50%;
+    }
+
+    100% {
+      background-position: 100% 50%;
+    }
+  }

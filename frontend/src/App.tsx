@@ -8,6 +8,7 @@ import ReimbursementForm from './pages/ReimbursementForm';
 import RequestTracker from './pages/RequestTracker';
 import Approvals from './pages/Approvals';
 import Reports from './pages/Reports';
+import AccountingDashboard from './pages/AccountingDashboard';
 import ManagementDashboard from './pages/ManagementDashboard';
 import Admin from './pages/Admin';
 import Profile from './pages/Profile';
@@ -25,8 +26,10 @@ function App() {
               <Route path="/request" element={<RequestForm />} />
               <Route path="/reimbursement" element={<ReimbursementForm />} />
               <Route path="/tracker" element={<RequestTracker />} />
+              <Route path="/request/edit/:id" element={<RequestForm />} />
               <Route path="/approvals" element={<Approvals />} />
               <Route path="/reports" element={<Reports />} />
+              <Route path="/accounting" element={<AccountingDashboard />} />
               <Route path="/management" element={<ManagementDashboard />} />
               <Route path="/admin" element={<Admin />} />
               <Route path="/profile" element={<Profile />} />

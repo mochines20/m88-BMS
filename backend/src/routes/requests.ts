@@ -139,6 +139,25 @@ const releaseRequest = async (
   }
 
   const { summaryByDepartmentId } = await buildDepartmentBudgetSummaryMap();
+  
+  // Check Petty Cash specifically if that is the method
+  const releaseMethod = ['cash', 'bank_transfer', 'check', 'petty_cash', 'other'].includes(toText(payload.release_method))
+    ? toText(payload.release_method)
+    : 'other';
+
+  if (releaseMethod === 'petty_cash') {
+    const { data: dept, error: deptErr } = await supabase
+      .from('departments')
+      .select('name, petty_cash_balance')
+      .eq('id', request.department_id)
+      .single();
+    
+    if (deptErr) throw new Error('Could not verify petty cash balance.');
+    if (toNumber(dept.petty_cash_balance) < toNumber(request.amount)) {
+      throw new Error(`Insufficient petty cash in ${dept.name}. Balance: ${toNumber(dept.petty_cash_balance).toFixed(2)}`);
+    }
+  }
+
   const insufficientDepartment = normalizedAllocations.find((allocation) => {
     const summary = summaryByDepartmentId.get(allocation.department_id);
     return !summary || summary.projected_remaining_budget < 0;
@@ -152,7 +171,7 @@ const releaseRequest = async (
   for (const allocation of normalizedAllocations) {
     const { data: department, error: departmentError } = await supabase
       .from('departments')
-      .select('id, used_budget')
+      .select('id, used_budget, petty_cash_balance')
       .eq('id', allocation.department_id)
       .single();
 
@@ -160,12 +179,18 @@ const releaseRequest = async (
       throw new Error(departmentError?.message || 'Department not found.');
     }
 
+    const updatePayload: any = {
+      used_budget: toNumber(department.used_budget) + toNumber(allocation.amount),
+      updated_at: new Date()
+    };
+
+    if (releaseMethod === 'petty_cash') {
+      updatePayload.petty_cash_balance = toNumber(department.petty_cash_balance) - toNumber(allocation.amount);
+    }
+
     const { error: updateDepartmentError } = await supabase
       .from('departments')
-      .update({
-        used_budget: toNumber(department.used_budget) + toNumber(allocation.amount),
-        updated_at: new Date()
-      })
+      .update(updatePayload)
       .eq('id', allocation.department_id);
 
     if (updateDepartmentError) {
@@ -173,9 +198,6 @@ const releaseRequest = async (
     }
   }
 
-  const releaseMethod = ['cash', 'bank_transfer', 'check', 'petty_cash', 'other'].includes(toText(payload.release_method))
-    ? toText(payload.release_method)
-    : 'other';
   const releaseReferenceNo = toText(payload.release_reference_no);
   const releaseNote = toText(payload.release_note);
   const releasedAt = new Date().toISOString();
@@ -305,12 +327,18 @@ router.get('/', authenticate, async (req: any, res) => {
   }
 });
 
-// POST /api/requests - submit new
-router.post('/', authenticate, authorize('employee'), async (req: any, res) => {
+// POST /api/requests - submit new (employee, supervisor, or accounting)
+router.post('/', authenticate, authorize('employee', 'supervisor', 'accounting'), async (req: any, res) => {
   const { item_name, category, amount, purpose, priority, attachments = [], metadata = {} } = req.body;
   const request_code = `REQ-${Date.now()}`;
   const activeDepartment = { id: req.user.department_id, fiscal_year: await getLatestConfiguredFiscalYear(supabase) };
   const normalizedAttachments = normalizeAttachments(attachments);
+  
+  // Determine initial status based on user role
+  // Employee -> pending_supervisor, Supervisor/Accounting -> pending_accounting (skip supervisor)
+  const userRole = req.user.role;
+  const initialStatus = userRole === 'employee' ? 'pending_supervisor' : 'pending_accounting';
+  
   const { data, error } = await supabase
     .from('expense_requests')
     .insert({
@@ -323,7 +351,7 @@ router.post('/', authenticate, authorize('employee'), async (req: any, res) => {
       amount,
       purpose,
       priority,
-      status: 'pending_supervisor',
+      status: initialStatus,
       submitted_at: new Date(),
       metadata
     })
@@ -350,22 +378,33 @@ router.post('/', authenticate, authorize('employee'), async (req: any, res) => {
     request_id: data.id,
     actor_id: req.user.id,
     action: 'submitted',
-    stage: 'supervisor',
-    note: 'Request submitted'
+    stage: userRole === 'employee' ? 'supervisor' : 'accounting',
+    note: userRole === 'employee' ? 'Request submitted' : `Request submitted by ${userRole} (routed directly to accounting)`
   });
 
-  const { data: supervisor } = await supabase.from('users').select('email').eq('department_id', req.user.department_id).eq('role', 'supervisor').single();
-  if (supervisor?.email) sendEmail(supervisor.email, 'New Expense Request', `New request ${request_code} submitted.`);
+  // Notify based on role
+  if (userRole === 'employee') {
+    // Notify supervisor
+    const { data: supervisor } = await supabase.from('users').select('email').eq('department_id', req.user.department_id).eq('role', 'supervisor').single();
+    if (supervisor?.email) sendEmail(supervisor.email, 'New Expense Request', `New request ${request_code} submitted.`);
+  } else {
+    // Notify accounting staff
+    const { data: accountingStaff } = await supabase.from('users').select('email').eq('role', 'accounting');
+    if (accountingStaff) {
+      for (const accountant of accountingStaff) {
+        if (accountant.email) {
+          sendEmail(accountant.email, 'New Direct Request', `New direct request from ${userRole} ${req.user.name || req.user.email}: ${request_code} requires accounting review.`);
+        }
+      }
+    }
+  }
 
   const responseRows = await appendWorkflowDataToRequests([{ ...data, attachments: normalizedAttachments }]);
   res.json(responseRows[0]);
 });
 
 // GET /api/requests/audit-logs
-router.get('/audit-logs', authenticate, async (req: any, res) => {
-  if (req.user.role !== 'super_admin') {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
+router.get('/audit-logs', authenticate, authorize('accounting', 'admin', 'super_admin'), async (req: any, res) => {
 
   const [approvalLogsResult, allocationLogsResult, auditLogsResult] = await Promise.all([
     supabase.from('approval_logs').select('*').order('timestamp', { ascending: false }).limit(150),
@@ -638,6 +677,65 @@ router.patch('/:id/approve', authenticate, authorize('supervisor', 'accounting')
   res.json(data);
 });
 
+// PATCH /api/requests/:id/hold - toggle on_hold status (accounting only)
+router.patch('/:id/hold', authenticate, authorize('accounting', 'admin'), async (req: any, res) => {
+  const { id } = req.params;
+  const { data: request, error: fetchError } = await supabase
+    .from('expense_requests')
+    .select('*')
+    .eq('id', id)
+    .single();
+  
+  if (fetchError || !request) {
+    return res.status(404).json({ error: 'Request not found' });
+  }
+  
+  // Only allow putting on_hold if currently pending_accounting
+  // or removing on_hold if currently on_hold
+  const currentStatus = request.status;
+  let newStatus: string;
+  
+  if (currentStatus === 'pending_accounting') {
+    newStatus = 'on_hold';
+  } else if (currentStatus === 'on_hold') {
+    newStatus = 'pending_accounting';
+  } else {
+    return res.status(400).json({ 
+      error: `Cannot change hold status when request is ${currentStatus}. Only pending_accounting or on_hold requests can be toggled.` 
+    });
+  }
+  
+  const { data, error } = await supabase
+    .from('expense_requests')
+    .update({
+      status: newStatus,
+      updated_at: new Date(),
+      on_hold_at: newStatus === 'on_hold' ? new Date() : null,
+      on_hold_by: newStatus === 'on_hold' ? req.user.id : null
+    })
+    .eq('id', id)
+    .select()
+    .single();
+  
+  if (error) return res.status(400).json({ error });
+  
+  // Log the action
+  await insertAuditLogs(id, req.user.id, [
+    {
+      entity_type: 'request',
+      action: 'status_changed',
+      field_name: 'status',
+      old_value: currentStatus,
+      new_value: newStatus,
+      note: newStatus === 'on_hold' 
+        ? 'Request placed on hold by accounting'
+        : 'Request removed from hold by accounting'
+    }
+  ]);
+  
+  res.json(data);
+});
+
 // PATCH /api/requests/:id/release
 router.patch('/:id/release', authenticate, authorize('accounting', 'admin'), async (req: any, res) => {
   const { id } = req.params;
@@ -648,6 +746,9 @@ router.patch('/:id/release', authenticate, authorize('accounting', 'admin'), asy
     .single();
   if (fetchError || !request) return res.status(400).json({ error: fetchError || 'Request not found.' });
 
+  if (request.status === 'on_hold') {
+    return res.status(400).json({ error: 'Cannot release request that is On Hold. Remove from hold first.' });
+  }
   if (request.status !== 'pending_accounting') {
     return res.status(400).json({ error: 'Only requests waiting for accounting approval can be released here.' });
   }
@@ -725,9 +826,28 @@ router.patch('/:id/return', authenticate, authorize('supervisor', 'accounting', 
 // PATCH /api/requests/:id/resubmit
 router.patch('/:id/resubmit', authenticate, authorize('employee'), async (req: any, res) => {
   const { id } = req.params;
-  const { purpose, attachments = [] } = req.body || {};
+  const { 
+    item_name, 
+    amount, 
+    category, 
+    priority, 
+    purpose, 
+    attachments = [] 
+  } = req.body || {};
+
+  // DEBUG LOGGING
+  console.log('RESUBMIT DEBUG - Raw body:', req.body);
+  console.log('RESUBMIT DEBUG - amount value:', amount, 'type:', typeof amount);
+
+  const normalizedItemName = toText(item_name);
+  const normalizedAmount = toNumber(amount);
+  const normalizedCategory = toText(category);
+  const normalizedPriority = toText(priority).toLowerCase() || 'normal';
   const normalizedPurpose = toText(purpose);
   const normalizedAttachments = normalizeAttachments(attachments);
+
+  console.log('RESUBMIT DEBUG - normalizedAmount:', normalizedAmount);
+
   const { data: request, error: fetchError } = await supabase
     .from('expense_requests')
     .select('*')
@@ -740,10 +860,17 @@ router.patch('/:id/resubmit', authenticate, authorize('employee'), async (req: a
     return res.status(400).json({ error: 'Only returned requests can be resubmitted.' });
   }
 
+  const newAmount = normalizedAmount !== undefined && normalizedAmount !== null ? normalizedAmount : request.amount;
+  console.log('RESUBMIT DEBUG - About to update with newAmount:', newAmount, 'old amount:', request.amount);
+
   const { data, error } = await supabase
     .from('expense_requests')
     .update({
       status: 'pending_supervisor',
+      item_name: normalizedItemName || request.item_name,
+      amount: newAmount,
+      category: normalizedCategory || request.category,
+      priority: normalizedPriority || request.priority,
       purpose: normalizedPurpose || request.purpose,
       submitted_at: new Date(),
       returned_by: null,
@@ -756,6 +883,20 @@ router.patch('/:id/resubmit', authenticate, authorize('employee'), async (req: a
     .select()
     .single();
   if (error) return res.status(400).json({ error });
+
+  console.log('RESUBMIT DEBUG - Updated request amount:', data?.amount);
+
+  // Update allocation if amount or department changes (assuming single item requests for now)
+  // For simplicity, we update the primary allocation to match the new request amount
+  const allocationAmount = normalizedAmount !== undefined && normalizedAmount !== null ? normalizedAmount : request.amount;
+  await supabase
+    .from('request_allocations')
+    .update({ 
+      amount: allocationAmount,
+      updated_at: new Date() 
+    })
+    .eq('request_id', id)
+    .eq('department_id', request.department_id);
 
   if (normalizedAttachments.length) {
     const { error: attachmentError } = await supabase.from('request_attachments').insert(
@@ -1109,6 +1250,56 @@ router.patch('/:id/archive', authenticate, authorize('supervisor', 'accounting',
     }
   ]);
 
+  res.json(data);
+});
+
+// PATCH /api/requests/:id/reconcile - mark request as reconciled
+router.patch('/:id/reconcile', authenticate, authorize('accounting', 'admin'), async (req: any, res) => {
+  const { id } = req.params;
+  const { reconciled, discrepancy_note } = req.body;
+  
+  const { data: request, error: fetchError } = await supabase
+    .from('expense_requests')
+    .select('*')
+    .eq('id', id)
+    .single();
+  
+  if (fetchError || !request) {
+    return res.status(404).json({ error: 'Request not found' });
+  }
+  
+  if (request.status !== 'released') {
+    return res.status(400).json({ error: 'Only released requests can be reconciled' });
+  }
+  
+  const { data, error } = await supabase
+    .from('expense_requests')
+    .update({
+      reconciled: Boolean(reconciled),
+      discrepancy_note: discrepancy_note || null,
+      reconciled_at: reconciled ? new Date() : null,
+      reconciled_by: reconciled ? req.user.id : null,
+      updated_at: new Date()
+    })
+    .eq('id', id)
+    .select()
+    .single();
+  
+  if (error) return res.status(400).json({ error });
+  
+  // Log the reconciliation action
+  await supabase.from('request_audit_logs').insert({
+    request_id: id,
+    action: reconciled ? 'reconciled' : 'unreconciled',
+    actor_id: req.user.id,
+    actor_name: req.user.name || req.user.email,
+    actor_role: req.user.role,
+    details: reconciled 
+      ? `Request marked as reconciled${discrepancy_note ? ` with note: ${discrepancy_note}` : ''}`
+      : 'Reconciliation removed',
+    created_at: new Date()
+  });
+  
   res.json(data);
 });
 

@@ -115,8 +115,11 @@ const Admin = () => {
   const [systemHealth, setSystemHealth] = useState<any>(null);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('');
   const [selectedBreakdown, setSelectedBreakdown] = useState<any>(null);
+  const [recentRequestsPage, setRecentRequestsPage] = useState(1);
+  const [recentPettyPage, setRecentPettyPage] = useState(1);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
+  const RECENT_PAGE_SIZE = 4;
   const [user, setUser] = useState<any>(null);
   const [budgetInputs, setBudgetInputs] = useState<Record<string, string>>({});
   const [fxRate, setFxRate] = useState(DEFAULT_FX_RATE);
@@ -399,6 +402,8 @@ const Admin = () => {
         headers: { Authorization: `Bearer ${token}` }
       });
       setSelectedBreakdown(res.data);
+      setRecentRequestsPage(1);
+      setRecentPettyPage(1);
     } catch (err: any) {
       setSelectedBreakdown(null);
       const message = err.response?.data?.error?.message || err.response?.data?.error || 'Detailed breakdown is not available yet for this department.';
@@ -848,7 +853,23 @@ const Admin = () => {
                         <p className="mt-1 text-sm text-[var(--role-text)]/70">
                           {log.item_name || 'No item name'} • {log.request_status || 'No status'}
                         </p>
-                        <p className="mt-2 text-sm text-[var(--role-text)]/80">{log.note || log.new_value || 'No note provided.'}</p>
+                        {log.old_value || log.new_value ? (
+                          <div className="mt-2 flex flex-wrap gap-2 items-center text-xs">
+                            {log.old_value && (
+                              <span className="px-2 py-0.5 rounded bg-red-500/10 text-red-600 line-through decoration-red-400">
+                                {log.old_value}
+                              </span>
+                            )}
+                            <svg className="w-3 h-3 text-[var(--role-text)]/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                            </svg>
+                            <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-bold">
+                              {log.new_value}
+                            </span>
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-sm text-[var(--role-text)]/80">{log.note || 'No note provided.'}</p>
+                        )}
                       </div>
                       <div className="text-sm text-[var(--role-text)]/60 lg:text-right">
                         <p>{log.actor_name || 'System'}</p>
@@ -1479,71 +1500,123 @@ return (
                   <div className="rounded-[28px] border border-[var(--role-border)] bg-[var(--role-accent)] p-5">
                     <div className="flex items-center justify-between gap-3">
                       <h3 className="text-lg font-semibold text-[var(--role-text)]">Recent Requests</h3>
-                      <span className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/60">Latest 8</span>
+                      <span className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/60">Latest 4 per page</span>
                     </div>
                     <div className="mt-4 space-y-3">
                       {selectedBreakdown.recent_requests.length === 0 && (
                         <p className="text-sm text-[var(--role-text)]/70">No recent requests for this department.</p>
                       )}
-                      {selectedBreakdown.recent_requests.map((request: any) => {
-                        const allocatedAmount = toNumber(request.department_allocation_amount || request.amount);
-                        const requestAmount = toNumber(request.amount);
+                      {selectedBreakdown.recent_requests
+                        .slice((recentRequestsPage - 1) * RECENT_PAGE_SIZE, recentRequestsPage * RECENT_PAGE_SIZE)
+                        .map((request: any) => {
+                          const allocatedAmount = toNumber(request.department_allocation_amount || request.amount);
+                          const requestAmount = toNumber(request.amount);
 
-                        return (
-                        <div key={request.id} className="rounded-2xl border border-[var(--role-border)] bg-[var(--role-surface)] p-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="font-semibold text-[var(--role-text)]">{request.item_name}</p>
-                              {request.allocation_count > 1 && (
-                                <p className="mt-1 text-xs text-[var(--role-text)]/60">
-                                  Shared request split across {request.allocation_count} departments
-                                </p>
-                              )}
-                              <p className="mt-1 text-sm text-[var(--role-text)]/70">{request.request_code} • {request.category}</p>
+                          return (
+                          <div key={request.id} className="rounded-2xl border border-[var(--role-border)] bg-[var(--role-surface)] p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="font-semibold text-[var(--role-text)]">{request.item_name}</p>
+                                {request.allocation_count > 1 && (
+                                  <p className="mt-1 text-xs text-[var(--role-text)]/60">
+                                    Shared request split across {request.allocation_count} departments
+                                  </p>
+                                )}
+                                <p className="mt-1 text-sm text-[var(--role-text)]/70">{request.request_code} • {request.category}</p>
+                              </div>
+                              <span className={`rounded-full border px-3 py-1 text-xs font-semibold capitalize ${statusTone(request.status)}`}>
+                                {request.status.replace('_', ' ')}
+                              </span>
                             </div>
-                            <span className={`rounded-full border px-3 py-1 text-xs font-semibold capitalize ${statusTone(request.status)}`}>
-                              {request.status.replace('_', ' ')}
-                            </span>
-                          </div>
-                          <div className="mt-3 flex items-center justify-between gap-3 text-sm">
-                            <div>
-                              <p className="font-semibold text-[var(--role-text)]">{displayMoney(allocatedAmount)}</p>
-                              {allocatedAmount !== requestAmount && (
-                                <p className="mt-1 text-xs text-[var(--role-text)]/60">
-                                  Request total {displayMoney(requestAmount)}
-                                </p>
-                              )}
+                            <div className="mt-3 flex items-center justify-between gap-3 text-sm">
+                              <div>
+                                <p className="font-semibold text-[var(--role-text)]">{displayMoney(allocatedAmount)}</p>
+                                {allocatedAmount !== requestAmount && (
+                                  <p className="mt-1 text-xs text-[var(--role-text)]/60">
+                                    Request total {displayMoney(requestAmount)}
+                                  </p>
+                                )}
+                              </div>
+                              <p className="text-[var(--role-text)]/60">{formatDateTime(request.submitted_at || request.updated_at)}</p>
                             </div>
-                            <p className="text-[var(--role-text)]/60">{formatDateTime(request.submitted_at || request.updated_at)}</p>
                           </div>
-                        </div>
-                        );
-                      })}
+                          );
+                        })}
                     </div>
+                    {/* Pagination for Recent Requests */}
+                    {selectedBreakdown.recent_requests.length > RECENT_PAGE_SIZE && (
+                      <div className="mt-4 flex items-center justify-between rounded-xl border border-[var(--role-border)] bg-[var(--role-surface)] px-4 py-2">
+                        <p className="text-xs text-[var(--role-text)]/60">
+                          Page {recentRequestsPage} of {Math.ceil(selectedBreakdown.recent_requests.length / RECENT_PAGE_SIZE)}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setRecentRequestsPage(p => Math.max(1, p - 1))}
+                            disabled={recentRequestsPage === 1}
+                            className="btn-secondary !px-3 !py-1 !text-xs disabled:opacity-50"
+                          >
+                            Previous
+                          </button>
+                          <button
+                            onClick={() => setRecentRequestsPage(p => Math.min(Math.ceil(selectedBreakdown.recent_requests.length / RECENT_PAGE_SIZE), p + 1))}
+                            disabled={recentRequestsPage >= Math.ceil(selectedBreakdown.recent_requests.length / RECENT_PAGE_SIZE)}
+                            className="btn-secondary !px-3 !py-1 !text-xs disabled:opacity-50"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="rounded-[28px] border border-[var(--role-border)] bg-[var(--role-accent)] p-5">
                     <div className="flex items-center justify-between gap-3">
                       <h3 className="text-lg font-semibold text-[var(--role-text)]">Recent Petty Cash</h3>
-                      <span className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/60">Latest 8</span>
+                      <span className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/60">Latest 4 per page</span>
                     </div>
                     <div className="mt-4 space-y-3">
                       {selectedBreakdown.recent_petty_cash_transactions.length === 0 && (
                         <p className="text-sm text-[var(--role-text)]/70">No petty cash activity yet.</p>
                       )}
-                      {selectedBreakdown.recent_petty_cash_transactions.map((transaction: any) => (
-                        <div key={transaction.id} className="rounded-2xl border border-[var(--role-border)] bg-[var(--role-surface)] p-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="font-semibold capitalize text-[var(--role-text)]">{transaction.type}</p>
-                              <p className="mt-1 text-sm text-[var(--role-text)]/70">{transaction.purpose || 'No purpose provided.'}</p>
+                      {selectedBreakdown.recent_petty_cash_transactions
+                        .slice((recentPettyPage - 1) * RECENT_PAGE_SIZE, recentPettyPage * RECENT_PAGE_SIZE)
+                        .map((transaction: any) => (
+                          <div key={transaction.id} className="rounded-2xl border border-[var(--role-border)] bg-[var(--role-surface)] p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="font-semibold capitalize text-[var(--role-text)]">{transaction.type}</p>
+                                <p className="mt-1 text-sm text-[var(--role-text)]/70">{transaction.purpose || 'No purpose provided.'}</p>
+                              </div>
+                              <p className="font-semibold text-[var(--role-text)]">{displayMoney(toNumber(transaction.amount))}</p>
                             </div>
-                            <p className="font-semibold text-[var(--role-text)]">{displayMoney(toNumber(transaction.amount))}</p>
+                            <p className="mt-3 text-xs text-[var(--role-text)]/60">{formatDateTime(transaction.transaction_date || transaction.created_at)}</p>
                           </div>
-                          <p className="mt-3 text-xs text-[var(--role-text)]/60">{formatDateTime(transaction.transaction_date || transaction.created_at)}</p>
-                        </div>
-                      ))}
+                        ))}
                     </div>
+                    {/* Pagination for Recent Petty Cash */}
+                    {selectedBreakdown.recent_petty_cash_transactions.length > RECENT_PAGE_SIZE && (
+                      <div className="mt-4 flex items-center justify-between rounded-xl border border-[var(--role-border)] bg-[var(--role-surface)] px-4 py-2">
+                        <p className="text-xs text-[var(--role-text)]/60">
+                          Page {recentPettyPage} of {Math.ceil(selectedBreakdown.recent_petty_cash_transactions.length / RECENT_PAGE_SIZE)}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setRecentPettyPage(p => Math.max(1, p - 1))}
+                            disabled={recentPettyPage === 1}
+                            className="btn-secondary !px-3 !py-1 !text-xs disabled:opacity-50"
+                          >
+                            Previous
+                          </button>
+                          <button
+                            onClick={() => setRecentPettyPage(p => Math.min(Math.ceil(selectedBreakdown.recent_petty_cash_transactions.length / RECENT_PAGE_SIZE), p + 1))}
+                            disabled={recentPettyPage >= Math.ceil(selectedBreakdown.recent_petty_cash_transactions.length / RECENT_PAGE_SIZE)}
+                            className="btn-secondary !px-3 !py-1 !text-xs disabled:opacity-50"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
