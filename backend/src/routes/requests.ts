@@ -327,6 +327,26 @@ router.get('/', authenticate, async (req: any, res) => {
   }
 });
 
+// GET /api/requests/my - get current user's requests (alias for employees)
+router.get('/my', authenticate, async (req: any, res) => {
+  const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
+  const { data, error } = await supabase
+    .from('expense_requests')
+    .select(REQUEST_RELATIONS_SELECT)
+    .eq('employee_id', req.user.id)
+    .order('submitted_at', { ascending: false });
+
+  if (error) return res.status(400).json({ error });
+
+  try {
+    const { summaryByDepartmentId, allocationsByRequestId } = await buildDepartmentBudgetSummaryMap();
+    const enrichedRows = enrichRequests(data || [], summaryByDepartmentId, allocationsByRequestId);
+    res.json(await appendWorkflowDataToRequests(enrichedRows));
+  } catch (summaryError: any) {
+    res.status(400).json({ error: summaryError?.message || summaryError });
+  }
+});
+
 // POST /api/requests - submit new (employee, supervisor, or accounting)
 router.post('/', authenticate, authorize('employee', 'supervisor', 'accounting'), async (req: any, res) => {
   const { item_name, category, amount, purpose, priority, attachments = [], metadata = {} } = req.body;

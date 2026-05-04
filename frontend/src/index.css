@@ -169,13 +169,13 @@
   }
 
   .nav-link {
-    @apply inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium text-[var(--role-text)] transition whitespace-nowrap;
+    @apply inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium text-[var(--role-text)] transition whitespace-nowrap shrink-0;
     border-color: var(--role-border);
     background-color: rgba(255, 255, 255, 0.5);
   }
 
   .nav-link-accent {
-    @apply inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-semibold text-white transition whitespace-nowrap;
+    @apply inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold text-white transition whitespace-nowrap shrink-0;
     border-color: var(--role-secondary);
     background-color: var(--role-primary);
   }

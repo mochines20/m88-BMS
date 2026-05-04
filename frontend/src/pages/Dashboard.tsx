@@ -22,6 +22,8 @@ import {
   Cell
 } from 'recharts';
 
+const formatTooltipMoney = (value: unknown) => formatMoney(toNumber(value));
+
 const getStatusLabel = (status: string) => {
   switch (status) {
     case 'pending_supervisor':
@@ -159,6 +161,13 @@ const Dashboard = () => {
           api.get('/api/requests', { headers: { Authorization: `Bearer ${token}` } })
         ]);
         setUser(userResponse.data);
+        
+        // Redirect employees to EmployeeHome
+        if (userResponse.data.role === 'employee') {
+          navigate('/employee');
+          return;
+        }
+        
         setRequests(requestsResponse.data);
 
         if (userResponse.data.role === 'super_admin') {
@@ -312,8 +321,6 @@ const Dashboard = () => {
 
     return { utilizationData, categoryData, monthlyData };
   }, [requests]);
-
-  const COLORS = ['#10B981', '#EF4444', '#F59E0B', '#3B82F6', '#8B5CF6', '#EC4899'];
 
   const toggleArchive = async (requestId: string, archived: boolean) => {
     const token = localStorage.getItem('token');
@@ -664,7 +671,7 @@ const Dashboard = () => {
                         <Cell key={`cell-${index}`} fill={index === 0 ? '#10B981' : '#E5E7EB'} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value: number) => formatMoney(value)} />
+                    <Tooltip formatter={formatTooltipMoney} />
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
@@ -692,7 +699,7 @@ const Dashboard = () => {
                       tickFormatter={(value) => `₱${value >= 1000 ? (value / 1000).toFixed(0) + 'k' : value}`}
                     />
                     <Tooltip 
-                      formatter={(value: number) => formatMoney(value)}
+                      formatter={formatTooltipMoney}
                       contentStyle={{ backgroundColor: 'var(--role-surface)', borderColor: 'var(--role-border)', borderRadius: '12px' }}
                     />
                     <Bar dataKey="value" fill="var(--role-primary)" radius={[4, 4, 0, 0]} />
@@ -735,7 +742,7 @@ const Dashboard = () => {
                     tickFormatter={(value) => `₱${value >= 1000 ? (value / 1000).toFixed(0) + 'k' : value}`}
                   />
                   <Tooltip 
-                    formatter={(value: number) => formatMoney(value)}
+                    formatter={formatTooltipMoney}
                     contentStyle={{ backgroundColor: 'var(--role-surface)', borderColor: 'var(--role-border)', borderRadius: '12px' }}
                   />
                   <Bar 

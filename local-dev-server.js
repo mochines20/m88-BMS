@@ -1088,18 +1088,124 @@ app.get('/api/auth/me', authenticate, async (req, res) => {
       .eq('id', req.user.id)
       .single();
 
-    if (error) return res.status(400).json({ error });
-    const activeDepartment = await syncUserDepartmentToActiveYear(
-      req.user.id,
-      userData.department_id,
-      await getLatestConfiguredFiscalYear()
-    );
-    res.json({
+    if (error) {
+      console.log('Error fetching user:', error);
+      return res.status(400).json({ error });
+    }
+
+    console.log('=== DEBUG /api/auth/me ===');
+    console.log('User data from DB:', userData);
+    console.log('User department_id from DB:', userData.department_id);
+
+    let finalDepartmentId = userData.department_id;
+    let departmentName = null;
+
+    // If no department assigned, try to find or create a default one
+    if (!finalDepartmentId) {
+      console.log('>>> No department_id found, searching for default department...');
+      
+      // Try to find existing IT department or any department
+      const { data: existingDept, error: itError } = await supabase
+        .from('departments')
+        .select('id, name')
+        .ilike('name', '%information%technology%')
+        .limit(1)
+        .single();
+      
+      console.log('IT department search result:', existingDept, 'Error:', itError);
+      
+      if (existingDept) {
+        finalDepartmentId = existingDept.id;
+        departmentName = existingDept.name;
+        console.log('>>> Found IT department:', departmentName, 'ID:', finalDepartmentId);
+      } else {
+        // Try to find any department
+        const { data: anyDept, error: anyError } = await supabase
+          .from('departments')
+          .select('id, name')
+          .limit(1)
+          .single();
+        
+        console.log('Any department search result:', anyDept, 'Error:', anyError);
+        
+        if (anyDept) {
+          finalDepartmentId = anyDept.id;
+          departmentName = anyDept.name;
+          console.log('>>> Found default department:', departmentName, 'ID:', finalDepartmentId);
+        } else {
+          console.log('>>> NO DEPARTMENT FOUND IN DATABASE!');
+        }
+      }
+
+      // Update user with department if found
+      if (finalDepartmentId) {
+        console.log('>>> Updating user with department_id:', finalDepartmentId);
+        const { error: updateError } = await supabase
+          .from('users')
+          .update({ department_id: finalDepartmentId })
+          .eq('id', req.user.id);
+        if (updateError) {
+          console.log('>>> ERROR updating user:', updateError);
+        } else {
+          console.log('>>> Successfully updated user with department_id:', finalDepartmentId);
+        }
+      }
+    } else {
+      console.log('>>> User already has department_id:', finalDepartmentId);
+      // Fetch department name for existing department
+      const { data: dept, error: deptError } = await supabase
+        .from('departments')
+        .select('name')
+        .eq('id', finalDepartmentId)
+        .single();
+      if (deptError) {
+        console.log('>>> Error fetching department by ID:', deptError);
+      }
+      departmentName = dept?.name || null;
+      console.log('>>> Department name from direct fetch:', departmentName);
+    }
+
+    // Build response using the department we found
+    // Note: We skip syncUserDepartmentToActiveYear for auto-assigned departments
+    // to avoid complexity and just use what we found directly
+    const finalDepartmentName = departmentName;
+    console.log('>>> finalDepartmentId:', finalDepartmentId);
+    console.log('>>> departmentName:', departmentName);
+    console.log('>>> Final department name:', finalDepartmentName);
+
+    // If we auto-assigned a department, use it directly
+    // Otherwise use sync for existing assignments
+    let responseDeptId = finalDepartmentId;
+    let responseDeptName = finalDepartmentName;
+    let responseFiscalYear = null;
+    
+    // Only call sync if user already had a department (not auto-assigned)
+    if (userData.department_id && finalDepartmentId) {
+      const activeDepartment = await syncUserDepartmentToActiveYear(
+        req.user.id,
+        finalDepartmentId,
+        await getLatestConfiguredFiscalYear()
+      );
+      console.log('Active department from sync:', activeDepartment);
+      if (activeDepartment) {
+        responseDeptId = activeDepartment.id;
+        responseDeptName = activeDepartment.name;
+        responseFiscalYear = activeDepartment.fiscal_year;
+      }
+    }
+
+    const response = {
       ...userData,
-      department_id: activeDepartment?.id || userData.department_id,
-      fiscal_year: activeDepartment?.fiscal_year ?? null
-    });
+      department_id: responseDeptId,
+      department_name: responseDeptName || 'Not Assigned',
+      fiscal_year: responseFiscalYear
+    };
+    
+    console.log('>>> RESPONSE department_id:', response.department_id);
+    console.log('>>> RESPONSE department_name:', response.department_name);
+    res.json(response);
   } catch (error) {
+    console.log('Error in /api/auth/me:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1292,9 +1398,27 @@ app.get('/api/requests', authenticate, async (req, res) => {
   }
 });
 
+// GET /api/requests/my - get current user's requests
+app.get('/api/requests/my', authenticate, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('expense_requests')
+      .select(REQUEST_RELATIONS_SELECT)
+      .eq('employee_id', req.user.id)
+      .order('submitted_at', { ascending: false });
+
+    if (error) return res.status(400).json({ error });
+    
+    const { summaryByDepartmentId, allocationsByRequestId } = await buildDepartmentBudgetSummaryMapV2();
+    res.json(enrichRequestsV2(data || [], summaryByDepartmentId, allocationsByRequestId));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/requests', authenticate, authorize(['employee', 'supervisor', 'accounting']), async (req, res) => {
   try {
-    const { item_name, category, amount, purpose, priority } = req.body;
+    const { item_name, category, category_id, amount, purpose, priority } = req.body;
     const normalizedAmount = toNumber(amount);
     const activeFiscalYear = await getLatestConfiguredFiscalYear();
     const activeDepartment = await syncUserDepartmentToActiveYear(req.user.id, req.user.department_id, activeFiscalYear);
@@ -1317,21 +1441,28 @@ app.post('/api/requests', authenticate, authorize(['employee', 'supervisor', 'ac
     const initialStatus = userRole === 'employee' ? 'pending_supervisor' : 'pending_accounting';
     const request_code = `REQ-${Date.now()}`;
 
+    const insertData = {
+      request_code,
+      employee_id: req.user.id,
+      department_id: activeDepartment.id,
+      fiscal_year: activeDepartment.fiscal_year,
+      item_name,
+      category,
+      amount: normalizedAmount,
+      purpose,
+      priority,
+      status: initialStatus,
+      submitted_at: new Date()
+    };
+
+    // Store category_id if provided
+    if (category_id) {
+      insertData.category_id = category_id;
+    }
+
     const { data, error } = await supabase
       .from('expense_requests')
-      .insert({
-        request_code,
-        employee_id: req.user.id,
-        department_id: activeDepartment.id,
-        fiscal_year: activeDepartment.fiscal_year,
-        item_name,
-        category,
-        amount: normalizedAmount,
-        purpose,
-        priority,
-        status: initialStatus,
-        submitted_at: new Date()
-      })
+      .insert(insertData)
       .select()
       .single();
 
@@ -1551,7 +1682,7 @@ app.get('/api/departments/:id/budget-breakdown', authenticate, async (req, res) 
       return candidateUpdatedAt > currentUpdatedAt ? candidate : current;
     }, selectedDepartment);
 
-    const [requestsResult, directExpensesResult, pettyCashResult] = await Promise.all([
+    const [requestsResult, directExpensesResult, pettyCashResult, categoriesResult] = await Promise.all([
       supabase
         .from('expense_requests')
         .select('id, request_code, department_id, item_name, category, amount, priority, status, submitted_at, updated_at')
@@ -1565,13 +1696,20 @@ app.get('/api/departments/:id/budget-breakdown', authenticate, async (req, res) 
         .from('petty_cash_transactions')
         .select('id, type, amount, purpose, reference_request_id, transaction_date, created_at')
         .in('department_id', relatedDepartmentIds)
-        .order('transaction_date', { ascending: false })
+        .order('transaction_date', { ascending: false }),
+      supabase
+        .from('budget_categories')
+        .select('id, category_code, category_name, budget_amount, remaining_amount, created_at')
+        .in('department_id', relatedDepartmentIds)
+        .order('category_code', { ascending: true })
     ]);
 
     if (requestsResult.error) return res.status(400).json({ error: requestsResult.error });
     if (directExpensesResult.error) return res.status(400).json({ error: directExpensesResult.error });
     if (pettyCashResult.error) return res.status(400).json({ error: pettyCashResult.error });
+    if (categoriesResult.error) console.log('Categories fetch error:', categoriesResult.error);
 
+    const budgetCategories = categoriesResult.data || [];
     const allRequests = requestsResult.data || [];
     const allocationsByRequestId = await fetchRequestAllocationsByRequestIdV2(allRequests.map((request) => request.id));
     const requests = allRequests.filter((request) => {
@@ -1671,6 +1809,14 @@ app.get('/api/departments/:id/budget-breakdown', authenticate, async (req, res) 
       recent_requests: requestsWithDepartmentShare.slice(0, 8),
       recent_direct_expenses: directExpenses.slice(0, 8),
       recent_petty_cash_transactions: pettyCashTransactions.slice(0, 8),
+      categories: budgetCategories.map(cat => ({
+        id: cat.id,
+        category_code: cat.category_code,
+        category_name: cat.category_name,
+        budget_amount: toNumber(cat.budget_amount),
+        remaining_amount: toNumber(cat.remaining_amount),
+        used_amount: toNumber(cat.budget_amount) - toNumber(cat.remaining_amount)
+      })),
       generated_at: new Date().toISOString()
     });
   } catch (error) {
@@ -1799,6 +1945,64 @@ app.post('/api/petty-cash/replenish', authenticate, authorize(['accounting', 'ad
 });
 
 // Approvals routes
+
+// PATCH /api/requests/:id/hold - Toggle on_hold status (accounting only)
+app.patch('/api/requests/:id/hold', authenticate, authorize(['accounting', 'admin', 'super_admin']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Get current request
+    const { data: request, error: fetchError } = await supabase
+      .from('expense_requests')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (fetchError || !request) {
+      return res.status(404).json({ error: 'Request not found' });
+    }
+    
+    // Can only hold requests that are pending_accounting
+    if (request.status !== 'on_hold' && request.status !== 'pending_accounting') {
+      return res.status(400).json({ error: 'Only pending accounting requests can be placed on hold' });
+    }
+    
+    // Toggle status
+    const newStatus = request.status === 'on_hold' ? 'pending_accounting' : 'on_hold';
+    const updateData = {
+      status: newStatus,
+      updated_at: new Date()
+    };
+    
+    // Add on_hold_at timestamp when placing on hold
+    if (newStatus === 'on_hold') {
+      updateData.on_hold_at = new Date();
+    }
+    
+    const { data, error } = await supabase
+      .from('expense_requests')
+      .update(updateData)
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    // Log the action
+    await supabase.from('approval_logs').insert({
+      request_id: id,
+      actor_id: req.user.id,
+      action: newStatus === 'on_hold' ? 'on_hold' : 'removed_from_hold',
+      stage: 'accounting',
+      note: newStatus === 'on_hold' ? 'Request placed On Hold by accounting' : 'Request removed from On Hold'
+    });
+    
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.patch('/api/requests/:id/priority', authenticate, authorize(['supervisor', 'admin']), async (req, res) => {
   try {
     const normalizedPriority = String(req.body?.priority || '').trim().toLowerCase();
@@ -1927,6 +2131,125 @@ app.patch('/api/requests/:id/approve', authenticate, authorize(['supervisor', 'a
       // Notify employee
       await createNotification(request.employee_id, `Success! Your budget request for ${request.item_name} has been released.`, 'success');
     }
+
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PATCH /api/requests/:id/release - Release funds (accounting only)
+// This is the explicit release endpoint for batch operations
+app.patch('/api/requests/:id/release', authenticate, authorize(['accounting', 'admin', 'super_admin']), async (req, res) => {
+  try {
+    const result = await getRequestForUser(req.params.id, req.user);
+    if (result.error) {
+      return res.status(result.status).json({ error: result.error.message || result.error });
+    }
+
+    const request = result.request;
+    
+    // Check if request is on hold
+    if (request.status === 'on_hold') {
+      return res.status(400).json({ error: 'Cannot release a request that is On Hold. Remove from hold first.' });
+    }
+    
+    // Can only release approved or pending_accounting requests
+    if (!['approved', 'pending_accounting'].includes(request.status)) {
+      return res.status(400).json({ error: `Cannot release request with status: ${request.status}` });
+    }
+
+    const { release_method, release_reference_no } = req.body || {};
+    const allocationsByRequestId = await fetchRequestAllocationsByRequestIdV2([request.id]);
+    const normalizedAllocations = normalizeAllocationsV2(request, allocationsByRequestId.get(request.id) || []);
+
+    // Update department budgets
+    for (const allocation of normalizedAllocations) {
+      const { data: department, error: departmentError } = await supabase.from('departments').select('id, used_budget').eq('id', allocation.department_id).single();
+      if (departmentError || !department) {
+        return res.status(400).json({ error: departmentError?.message || 'Department not found.' });
+      }
+      const { error: updateDepartmentError } = await supabase
+        .from('departments')
+        .update({ used_budget: toNumber(department.used_budget) + toNumber(allocation.amount), updated_at: new Date() })
+        .eq('id', allocation.department_id);
+      if (updateDepartmentError) return res.status(400).json({ error: updateDepartmentError });
+    }
+
+    // Update category budget (if category_id or category matches)
+    let categoryData = null;
+    
+    // First try to match by category_id if available
+    if (request.category_id) {
+      const { data: catById } = await supabase
+        .from('budget_categories')
+        .select('id, category_code, remaining_amount, budget_amount')
+        .eq('id', request.category_id)
+        .single();
+      categoryData = catById;
+    }
+    
+    // Fallback to matching by category name/code
+    if (!categoryData && request.category) {
+      const { data: catByName } = await supabase
+        .from('budget_categories')
+        .select('id, category_code, remaining_amount, budget_amount')
+        .eq('department_id', request.department_id)
+        .ilike('category_code', request.category.replace(/[^a-zA-Z0-9]/g, ''))
+        .single();
+      categoryData = catByName;
+    }
+    
+    if (categoryData) {
+      const newRemaining = Math.max(0, toNumber(categoryData.remaining_amount) - toNumber(request.amount));
+      const { error: catUpdateError } = await supabase
+        .from('budget_categories')
+        .update({ 
+          remaining_amount: newRemaining,
+          updated_at: new Date()
+        })
+        .eq('id', categoryData.id);
+      
+      if (!catUpdateError) {
+        console.log(`Deducted ${request.amount} from category ${categoryData.category_code}. New remaining: ${newRemaining}`);
+      }
+    }
+
+    // Update request to released
+    const { data, error } = await supabase
+      .from('expense_requests')
+      .update({ 
+        status: 'released',
+        released_at: new Date(),
+        released_by: req.user.id,
+        release_method: release_method || 'bank_transfer',
+        release_reference_no: release_reference_no || null,
+        updated_at: new Date()
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error) return res.status(400).json({ error });
+
+    // Log the release
+    await supabase.from('approval_logs').insert({
+      request_id: request.id,
+      actor_id: req.user.id,
+      action: 'released',
+      stage: 'finance',
+      note: `Released via ${release_method || 'bank_transfer'}${release_reference_no ? ` (Ref ${release_reference_no})` : ''}`
+    });
+
+    await supabase.from('allocation_logs').insert({
+      request_id: request.id,
+      actor_id: req.user.id,
+      action: 'released',
+      note: `Released with ${normalizedAllocations.length} department allocation(s).`
+    });
+
+    // Notify employee
+    await createNotification(request.employee_id, `Success! Your budget request for ${request.item_name} has been released.`, 'success');
 
     res.json(data);
   } catch (error) {
@@ -2385,6 +2708,523 @@ app.get('/api/reports/requests', authenticate, async (req, res) => {
     const { data, error } = await query.order('submitted_at', { ascending: false });
     if (error) return res.status(400).json({ error });
     res.json(data || []);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========== BUDGET MANAGEMENT ROUTES ==========
+
+// GET /api/budget/categories
+app.get('/api/budget/categories', authenticate, async (req, res) => {
+  try {
+    const { department_id, fiscal_year } = req.query;
+    const activeFiscalYear = await getLatestConfiguredFiscalYear();
+    const targetFiscalYear = fiscal_year ? parseInt(fiscal_year) : activeFiscalYear;
+
+    let query = supabase
+      .from('budget_categories')
+      .select('*')
+      .eq('fiscal_year', targetFiscalYear);
+
+    if (department_id) {
+      query = query.eq('department_id', department_id);
+    }
+
+    const { data, error } = await query.order('category_name');
+    if (error) throw error;
+
+    res.json(data || []);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/budget/categories
+app.post('/api/budget/categories', authenticate, authorize(['accounting', 'admin', 'super_admin']), async (req, res) => {
+  try {
+    const { department_id, category_code, category_name, budget_amount, fiscal_year } = req.body;
+    const activeFiscalYear = await getLatestConfiguredFiscalYear();
+    const requestedBudget = toNumber(budget_amount);
+
+    const [{ data: department, error: departmentError }, { data: existingCategories, error: categoriesError }] = await Promise.all([
+      supabase
+        .from('departments')
+        .select('id, annual_budget')
+        .eq('id', department_id)
+        .single(),
+      supabase
+        .from('budget_categories')
+        .select('budget_amount')
+        .eq('department_id', department_id)
+        .eq('fiscal_year', fiscal_year || activeFiscalYear)
+    ]);
+
+    if (departmentError || !department) {
+      return res.status(404).json({ error: 'Department not found' });
+    }
+
+    if (categoriesError) throw categoriesError;
+
+    const annualBudget = toNumber(department.annual_budget);
+    const allocatedBudget = (existingCategories || []).reduce((sum, category) => sum + toNumber(category.budget_amount), 0);
+
+    if (allocatedBudget + requestedBudget > annualBudget) {
+      return res.status(400).json({
+        error: `Category allocation exceeds department budget. Available to allocate: ${Math.max(0, annualBudget - allocatedBudget).toFixed(2)}`
+      });
+    }
+
+    const { data, error } = await supabase
+      .from('budget_categories')
+      .insert({
+        department_id,
+        fiscal_year: fiscal_year || activeFiscalYear,
+        category_code: category_code.toUpperCase(),
+        category_name,
+        budget_amount: requestedBudget,
+        remaining_amount: requestedBudget,
+        created_at: new Date(),
+        updated_at: new Date()
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/budget/categories/:id
+app.put('/api/budget/categories/:id', authenticate, authorize(['accounting', 'admin', 'super_admin']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { budget_amount, category_name } = req.body;
+
+    const { data: current } = await supabase
+      .from('budget_categories')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (!current) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+
+    const requestedBudget = toNumber(budget_amount || current.budget_amount);
+    const usedAmount = current.used_amount || 0;
+    const committedAmount = current.committed_amount || 0;
+    const [{ data: department, error: departmentError }, { data: siblingCategories, error: siblingCategoriesError }] = await Promise.all([
+      supabase
+        .from('departments')
+        .select('id, annual_budget')
+        .eq('id', current.department_id)
+        .single(),
+      supabase
+        .from('budget_categories')
+        .select('id, budget_amount')
+        .eq('department_id', current.department_id)
+        .eq('fiscal_year', current.fiscal_year)
+    ]);
+
+    if (departmentError || !department) {
+      return res.status(404).json({ error: 'Department not found' });
+    }
+
+    if (siblingCategoriesError) throw siblingCategoriesError;
+
+    const otherAllocatedBudget = (siblingCategories || [])
+      .filter((category) => category.id !== id)
+      .reduce((sum, category) => sum + toNumber(category.budget_amount), 0);
+    const annualBudget = toNumber(department.annual_budget);
+
+    if (otherAllocatedBudget + requestedBudget > annualBudget) {
+      return res.status(400).json({
+        error: `Category allocation exceeds department budget. Available to allocate: ${Math.max(0, annualBudget - otherAllocatedBudget).toFixed(2)}`
+      });
+    }
+
+    const newRemaining = requestedBudget - usedAmount - committedAmount;
+
+    const { data, error } = await supabase
+      .from('budget_categories')
+      .update({
+        budget_amount: requestedBudget,
+        category_name: category_name || current.category_name,
+        remaining_amount: newRemaining,
+        updated_at: new Date()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/budget/categories/:id
+app.delete('/api/budget/categories/:id', authenticate, authorize(['accounting', 'admin', 'super_admin']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const { data: current } = await supabase
+      .from('budget_categories')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (!current) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+
+    const { error } = await supabase
+      .from('budget_categories')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+
+    res.json({ message: 'Category deleted successfully', deleted: current });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/budget/cost-centers
+app.get('/api/budget/cost-centers', authenticate, async (req, res) => {
+  try {
+    const { department_id } = req.query;
+
+    let query = supabase
+      .from('cost_centers')
+      .select('*, departments(name)')
+      .eq('is_active', true);
+
+    if (department_id) {
+      query = query.eq('department_id', department_id);
+    }
+
+    const { data, error } = await query.order('cost_center_code');
+    if (error) throw error;
+
+    res.json(data || []);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/budget/monitoring
+app.get('/api/budget/monitoring', authenticate, authorize(['accounting', 'admin', 'super_admin', 'supervisor', 'management']), async (req, res) => {
+  try {
+    const { department_id, fiscal_year } = req.query;
+    const activeFiscalYear = await getLatestConfiguredFiscalYear();
+    const targetFiscalYear = fiscal_year ? parseInt(fiscal_year) : activeFiscalYear;
+
+    // Get budget categories
+    let categoriesQuery = supabase
+      .from('budget_categories')
+      .select('*, departments(name)')
+      .eq('fiscal_year', targetFiscalYear);
+
+    if (department_id) {
+      categoriesQuery = categoriesQuery.eq('department_id', department_id);
+    }
+
+    const { data: categories, error: catError } = await categoriesQuery;
+    if (catError) throw catError;
+
+    // Build report (simplified for local dev)
+    const report = (categories || []).map((cat) => ({
+      category_id: cat.id,
+      category_code: cat.category_code,
+      category_name: cat.category_name,
+      department_id: cat.department_id,
+      department_name: cat.departments?.name || 'Unknown',
+      budget: Number(cat.budget_amount),
+      actual: Number(cat.used_amount || 0),
+      committed: Number(cat.committed_amount || 0),
+      remaining: Number(cat.remaining_amount || cat.budget_amount),
+      utilization_pct: cat.budget_amount > 0 
+        ? (((Number(cat.used_amount || 0) + Number(cat.committed_amount || 0)) / Number(cat.budget_amount)) * 100).toFixed(1)
+        : 0
+    }));
+
+    res.json(report);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/budget/summary
+app.get('/api/budget/summary', authenticate, authorize(['accounting', 'admin', 'super_admin', 'management']), async (req, res) => {
+  try {
+    const { fiscal_year } = req.query;
+    const activeFiscalYear = await getLatestConfiguredFiscalYear();
+    const targetFiscalYear = fiscal_year ? parseInt(fiscal_year) : activeFiscalYear;
+
+    const { data: categories, error: catError } = await supabase
+      .from('budget_categories')
+      .select('*')
+      .eq('fiscal_year', targetFiscalYear);
+
+    if (catError) throw catError;
+
+    const totalBudget = (categories || []).reduce((sum, c) => sum + Number(c.budget_amount || 0), 0);
+    const totalUsed = (categories || []).reduce((sum, c) => sum + Number(c.used_amount || 0), 0);
+    const totalCommitted = (categories || []).reduce((sum, c) => sum + Number(c.committed_amount || 0), 0);
+
+    res.json({
+      fiscal_year: targetFiscalYear,
+      pending_for_review: 0, // Would need to calculate from requests
+      outstanding_cash_advances: 0, // Would need to calculate from cash_advances
+      overdue_liquidations: 0, // Would need to calculate
+      budget_utilization_pct: totalBudget > 0 ? ((totalUsed + totalCommitted) / totalBudget * 100).toFixed(1) : 0,
+      total_budget: totalBudget,
+      total_used: totalUsed,
+      total_committed: totalCommitted,
+      total_remaining: totalBudget - totalUsed - totalCommitted
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========== CASH ADVANCE ROUTES ==========
+
+// GET /api/cash-advances
+app.get('/api/cash-advances', authenticate, async (req, res) => {
+  try {
+    const { status, employee_id, overdue_only } = req.query;
+
+    let query = supabase
+      .from('cash_advances')
+      .select('*, employee:users(id, name, email), department:departments(id, name)')
+      .order('issued_at', { ascending: false });
+
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    if (req.user.role === 'employee') {
+      query = query.eq('employee_id', req.user.id);
+    } else if (employee_id) {
+      query = query.eq('employee_id', employee_id);
+    }
+
+    if (overdue_only === 'true') {
+      query = query.eq('status', 'overdue');
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    res.json(data || []);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/cash-advances/aging
+app.get('/api/cash-advances/aging', authenticate, authorize(['accounting', 'admin', 'super_admin', 'management']), async (req, res) => {
+  try {
+    const { data: cashAdvances, error } = await supabase
+      .from('cash_advances')
+      .select('*, employee:users(id, name, email, department_id), department:departments(id, name)')
+      .in('status', ['outstanding', 'partially_liquidated', 'overdue'])
+      .order('liquidation_due_at', { ascending: true });
+
+    if (error) throw error;
+
+    const now = new Date();
+    const agingReport = (cashAdvances || []).map((ca) => {
+      const dueDate = ca.liquidation_due_at ? new Date(ca.liquidation_due_at) : null;
+      const daysOpen = dueDate 
+        ? Math.floor((now.getTime() - new Date(ca.issued_at).getTime()) / (1000 * 60 * 60 * 24))
+        : 0;
+      const daysOverdue = dueDate && now > dueDate
+        ? Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24))
+        : 0;
+
+      let agingBucket = 'Current';
+      if (daysOverdue > 0) {
+        if (daysOverdue <= 7) agingBucket = '1-7 Days';
+        else if (daysOverdue <= 14) agingBucket = '8-14 Days';
+        else if (daysOverdue <= 30) agingBucket = '15-30 Days';
+        else agingBucket = '30+ Days';
+      }
+
+      return {
+        id: ca.id,
+        advance_code: ca.advance_code,
+        employee_name: ca.employee?.name || 'Unknown',
+        department_name: ca.department?.name || 'Unknown',
+        amount_issued: Number(ca.amount_issued),
+        amount_liquidated: Number(ca.amount_liquidated || 0),
+        balance: Number(ca.balance),
+        issued_at: ca.issued_at,
+        liquidation_due_at: ca.liquidation_due_at,
+        days_open: daysOpen,
+        days_overdue: daysOverdue,
+        aging_bucket: agingBucket,
+        status: ca.status,
+        purpose: ca.purpose
+      };
+    });
+
+    const summary = {
+      'Current': agingReport.filter((r) => r.aging_bucket === 'Current'),
+      '1-7 Days': agingReport.filter((r) => r.aging_bucket === '1-7 Days'),
+      '8-14 Days': agingReport.filter((r) => r.aging_bucket === '8-14 Days'),
+      '15-30 Days': agingReport.filter((r) => r.aging_bucket === '15-30 Days'),
+      '30+ Days': agingReport.filter((r) => r.aging_bucket === '30+ Days')
+    };
+
+    res.json({
+      total_outstanding: agingReport.reduce((sum, r) => sum + r.balance, 0),
+      total_count: agingReport.length,
+      overdue_count: agingReport.filter((r) => r.days_overdue > 0).length,
+      summary,
+      details: agingReport
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/cash-advances/:id
+app.get('/api/cash-advances/:id', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data: cashAdvance, error: caError } = await supabase
+      .from('cash_advances')
+      .select('*, employee:users(id, name, email), department:departments(id, name)')
+      .eq('id', id)
+      .single();
+
+    if (caError) throw caError;
+    if (!cashAdvance) {
+      return res.status(404).json({ error: 'Cash advance not found' });
+    }
+
+    if (req.user.role === 'employee' && cashAdvance.employee_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const { data: items, error: itemsError } = await supabase
+      .from('liquidation_items')
+      .select('*, category:budget_categories(id, category_code, category_name)')
+      .eq('cash_advance_id', id)
+      .order('expense_date', { ascending: true });
+
+    if (itemsError) throw itemsError;
+
+    res.json({
+      ...cashAdvance,
+      liquidation_items: items || []
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/cash-advances/employee/:employee_id
+app.get('/api/cash-advances/employee/:employee_id', authenticate, async (req, res) => {
+  try {
+    const { employee_id } = req.params;
+
+    if (req.user.role === 'employee' && req.user.id !== employee_id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const { data, error } = await supabase
+      .from('cash_advances')
+      .select('*, department:departments(id, name)')
+      .eq('employee_id', employee_id)
+      .order('issued_at', { ascending: false });
+
+    if (error) throw error;
+
+    res.json(data || []);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/cash-advances/for-liquidation/:employee_id
+app.get('/api/cash-advances/for-liquidation/:employee_id', authenticate, async (req, res) => {
+  try {
+    const { employee_id } = req.params;
+
+    if (req.user.role === 'employee' && req.user.id !== employee_id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const { data, error } = await supabase
+      .from('cash_advances')
+      .select('*, department:departments(id, name)')
+      .eq('employee_id', employee_id)
+      .in('status', ['outstanding', 'partially_liquidated', 'overdue'])
+      .gt('balance', 0)
+      .order('issued_at', { ascending: false });
+
+    if (error) throw error;
+
+    res.json(data || []);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/cash-advances/:id/liquidate
+app.post('/api/cash-advances/:id/liquidate', authenticate, authorize(['employee', 'accounting', 'admin', 'super_admin']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { items } = req.body;
+
+    const { data: cashAdvance, error: caError } = await supabase
+      .from('cash_advances')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (caError || !cashAdvance) {
+      return res.status(404).json({ error: 'Cash advance not found' });
+    }
+
+    if (req.user.role === 'employee' && cashAdvance.employee_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const itemsToInsert = items.map((item) => ({
+      cash_advance_id: id,
+      expense_date: item.expense_date,
+      category_id: item.category_id,
+      description: item.description,
+      amount: item.amount,
+      receipt_attached: item.receipt_attached || false,
+      created_at: new Date()
+    }));
+
+    const { data: insertedItems, error: insertError } = await supabase
+      .from('liquidation_items')
+      .insert(itemsToInsert)
+      .select();
+
+    if (insertError) throw insertError;
+
+    res.json({
+      message: 'Liquidation items added',
+      items: insertedItems,
+      cash_advance_id: id
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

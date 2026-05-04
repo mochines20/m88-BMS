@@ -2,7 +2,7 @@ import { ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import api from '../api';
-import toast, { Toaster } from 'react-hot-toast';
+import { Toaster } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 
 interface LayoutProps {
@@ -190,11 +190,11 @@ const Layout = ({ children }: LayoutProps) => {
               <p className="text-xs text-[var(--bms-muted)]">Welcome, {normalizeDisplayName(user.name)}</p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-1">
-            <div className="flex flex-wrap gap-1">
+          <div className="flex flex-1 flex-wrap items-center justify-end gap-1 min-w-0">
+            <div className="flex flex-wrap gap-1 items-center justify-end">
               <button
                 onClick={() => setShowNotifications(!showNotifications)}
-                className="relative rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] p-2.5 transition hover:bg-[var(--role-accent)]/80"
+                className="relative rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] p-2 transition hover:bg-[var(--role-accent)]/80 shrink-0"
               >
                 <svg className="h-5 w-5 text-[var(--role-primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
@@ -232,26 +232,27 @@ const Layout = ({ children }: LayoutProps) => {
                   </div>
                 </div>
               )}
-              <Link to="/" className={getNavClassName('/')}>Overview</Link>
-              {user.role === 'employee' && (
+              {user.role === 'employee' ? (
                 <>
-                  <Link to="/request" className={getNavClassName('/request')}>New Request</Link>
-                  <Link to="/reimbursement" className={getNavClassName('/reimbursement')}>Reimbursement</Link>
+                  <Link to="/employee" className={getNavClassName('/employee')}>Overview</Link>
+                  <Link to="/requests/new" className={`${getNavClassName('/requests/new')} whitespace-nowrap`}>New Request</Link>
                   <Link to="/tracker" className={getNavClassName('/tracker')}>My History</Link>
+                </>
+              ) : (
+                <>
+                  <Link to="/" className={getNavClassName('/')}>Overview</Link>
+                  <Link to="/requests/new" className={`${getNavClassName('/requests/new')} whitespace-nowrap`}>New Request</Link>
                 </>
               )}
               {(user.role === 'supervisor' || user.role === 'accounting') && (
-                <>
-                  <Link to="/request" className={getNavClassName('/request')}>New Request</Link>
-                  <Link to="/approvals" className={`${getNavClassName('/approvals')} relative`}>
-                    {user.role === 'supervisor' ? 'Team Approvals' : 'Fund Releases'}
-                    {pendingApprovalsCount > 0 && (
-                      <span className="ml-1.5 inline-flex h-5 min-w-[18px] items-center justify-center rounded-full border border-[var(--role-primary)]/20 bg-[var(--role-primary)]/10 px-1 text-[10px] font-semibold text-[var(--role-primary)]">
-                        {pendingApprovalsCount}
-                      </span>
-                    )}
-                  </Link>
-                </>
+                <Link to="/approvals" className={`${getNavClassName('/approvals')} relative whitespace-nowrap`}>
+                  {user.role === 'supervisor' ? 'Team Approvals' : 'Fund Releases'}
+                  {pendingApprovalsCount > 0 && (
+                    <span className="ml-1.5 inline-flex h-5 min-w-[18px] items-center justify-center rounded-full border border-[var(--role-primary)]/20 bg-[var(--role-primary)]/10 px-1 text-[10px] font-semibold text-[var(--role-primary)]">
+                      {pendingApprovalsCount}
+                    </span>
+                  )}
+                </Link>
               )}
               {user.role !== 'employee' && user.role !== 'super_admin' && (
                 <Link to="/reports" className={getNavClassName('/reports')}>Analytics</Link>

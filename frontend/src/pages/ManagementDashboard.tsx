@@ -3,7 +3,7 @@ import api from '../api';
 import toast from 'react-hot-toast';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  PieChart, Pie, Cell, AreaChart, Area, Legend 
+  AreaChart, Area
 } from 'recharts';
 import { formatMoney, formatPercent, toNumber } from '../utils/format';
 import jsPDF from 'jspdf';
@@ -97,8 +97,6 @@ const ManagementDashboard = () => {
     const monthOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return monthOrder.map(m => ({ month: m, amount: months[m] || 0 }));
   }, [requests, fiscalYear]);
-
-  const COLORS = ['#10B981', '#3B82F6', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
 
   const exportCSV = () => {
     const headers = ['Department', 'Fiscal Year', 'Annual Budget', 'Used Budget', 'Remaining Budget', 'Utilization %'];
@@ -258,9 +256,8 @@ const ManagementDashboard = () => {
         body: sortedDepts.map(d => {
           const util = (toNumber(d.used_budget) / toNumber(d.annual_budget)) * 100;
           let status = 'Healthy';
-          let statusColor = [16, 185, 129];
-          if (util > 90) { status = 'Critical'; statusColor = [239, 68, 68]; }
-          else if (util > 75) { status = 'Warning'; statusColor = [245, 158, 11]; }
+          if (util > 90) { status = 'Critical'; }
+          else if (util > 75) { status = 'Warning'; }
           
           return [
             d.name,

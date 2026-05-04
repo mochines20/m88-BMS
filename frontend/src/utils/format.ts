@@ -1,10 +1,12 @@
-export const formatMoney = (value: number, currency: 'PHP' | 'USD' = 'PHP') =>
-  new Intl.NumberFormat('en-PH', {
+export const formatMoney = (value: number, currency: 'PHP' | 'USD' | 'IDR' = 'PHP') => {
+  const locale = currency === 'IDR' ? 'id-ID' : 'en-PH';
+  return new Intl.NumberFormat(locale, {
     style: 'currency',
     currency,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }).format(Number.isFinite(value) ? value : 0);
+};
 
 export const toNumber = (value: unknown) => {
   const parsed = Number(value);

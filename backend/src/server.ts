@@ -13,6 +13,8 @@ import vendorRoutes from './routes/vendors';
 import slaRoutes from './routes/sla';
 import budgetAlertRoutes from './routes/budgetAlerts';
 import notificationRoutes from './routes/notifications';
+import budgetRoutes from './routes/budget';
+import cashAdvanceRoutes from './routes/cashAdvances';
 
 dotenv.config();
 
@@ -34,6 +36,8 @@ app.use('/api/vendors', vendorRoutes);
 app.use('/api/sla', slaRoutes);
 app.use('/api/budget-alerts', budgetAlertRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/budget', budgetRoutes);
+app.use('/api/cash-advances', cashAdvanceRoutes);
 
 const PORT = process.env.PORT || 5000;
 

@@ -12,6 +12,12 @@ import AccountingDashboard from './pages/AccountingDashboard';
 import ManagementDashboard from './pages/ManagementDashboard';
 import Admin from './pages/Admin';
 import Profile from './pages/Profile';
+import EmployeeHome from './pages/EmployeeHome';
+import FinanceDashboard from './pages/FinanceDashboard';
+import BudgetSetup from './pages/BudgetSetup';
+import NewRequestForm from './pages/NewRequestForm';
+import CashAdvanceAging from './pages/CashAdvanceAging';
+import AuditTrail from './pages/AuditTrail';
 
 function App() {
   return (
@@ -23,7 +29,11 @@ function App() {
           <Layout>
             <Routes>
               <Route path="/" element={<Dashboard />} />
-              <Route path="/request" element={<RequestForm />} />
+              <Route path="/employee" element={<EmployeeHome />} />
+              <Route path="/finance" element={<FinanceDashboard />} />
+              <Route path="/budget-setup" element={<BudgetSetup />} />
+              <Route path="/budget-monitoring" element={<FinanceDashboard />} />
+              <Route path="/requests/new" element={<NewRequestForm />} />
               <Route path="/reimbursement" element={<ReimbursementForm />} />
               <Route path="/tracker" element={<RequestTracker />} />
               <Route path="/request/edit/:id" element={<RequestForm />} />
@@ -33,6 +43,8 @@ function App() {
               <Route path="/management" element={<ManagementDashboard />} />
               <Route path="/admin" element={<Admin />} />
               <Route path="/profile" element={<Profile />} />
+              <Route path="/cash-advance-aging" element={<CashAdvanceAging />} />
+              <Route path="/audit-trail/:requestId?" element={<AuditTrail />} />
             </Routes>
           </Layout>
         } />

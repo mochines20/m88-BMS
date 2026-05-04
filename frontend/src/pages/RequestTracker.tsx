@@ -209,22 +209,6 @@ const RequestTracker = () => {
     [selectedRequest]
   );
 
-  const resubmitRequest = async () => {
-    if (!selectedRequest) return;
-    const token = localStorage.getItem('token');
-    try {
-      await api.patch(
-        `/api/requests/${selectedRequest.id}/resubmit`,
-        { purpose: selectedRequest.purpose },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      toast.success('Request resubmitted!');
-      await fetchRequests(false);
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Resubmission failed');
-    }
-  };
-
   const submitLiquidation = async () => {
     if (!selectedRequest) return;
     const token = localStorage.getItem('token');

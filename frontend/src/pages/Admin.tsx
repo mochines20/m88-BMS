@@ -9,10 +9,12 @@ import {
   toNumber 
 } from '../utils/format';
 
-const DEFAULT_FX_RATE = 56.0;
-const FX_ENDPOINT = 'https://api.frankfurter.dev/v1/latest?base=USD&symbols=PHP';
+const DEFAULT_FX_RATE_PHP = 56.0;
+const DEFAULT_FX_RATE_IDR = 15800.0;
+const FX_ENDPOINT = 'https://api.frankfurter.dev/v1/latest?base=USD&symbols=PHP,IDR';
 
-const toUsd = (amount: number, fxRate: number) => amount / (fxRate || DEFAULT_FX_RATE);
+const toUsd = (amount: number, fxRate: number) => amount / (fxRate || DEFAULT_FX_RATE_PHP);
+const toCurrency = (amount: number, fromRate: number, toRate: number) => (amount / fromRate) * toRate;
 
 const getBudgetHealth = (department: any) => {
   const annualBudget = toNumber(department?.annual_budget);
@@ -122,10 +124,13 @@ const Admin = () => {
   const RECENT_PAGE_SIZE = 4;
   const [user, setUser] = useState<any>(null);
   const [budgetInputs, setBudgetInputs] = useState<Record<string, string>>({});
-  const [fxRate, setFxRate] = useState(DEFAULT_FX_RATE);
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [newCategory, setNewCategory] = useState({ category_code: '', category_name: '', budget_amount: '' });
+  const [fxRatePhp, setFxRatePhp] = useState(DEFAULT_FX_RATE_PHP);
+  const [fxRateIdr, setFxRateIdr] = useState(DEFAULT_FX_RATE_IDR);
   const [fxRateUpdatedAt, setFxRateUpdatedAt] = useState('');
   const [fxStatus, setFxStatus] = useState<'live' | 'fallback'>('fallback');
-  const [displayCurrency, setDisplayCurrency] = useState<'PHP' | 'USD'>('PHP');
+  const [displayCurrency, setDisplayCurrency] = useState<'PHP' | 'USD' | 'IDR'>('PHP');
   const [selectedFiscalYear, setSelectedFiscalYear] = useState<number>(new Date().getFullYear());
   const [departmentSearch, setDepartmentSearch] = useState('');
   const [budgetHealthFilter, setBudgetHealthFilter] = useState<'all' | 'low' | 'high' | 'critical'>('all');
@@ -333,9 +338,15 @@ const Admin = () => {
     try {
       const response = await fetch(FX_ENDPOINT);
       const data = await response.json();
-      const latestRate = toNumber(data?.rates?.PHP);
-      if (latestRate > 0) {
-        setFxRate(latestRate);
+      const latestRatePhp = toNumber(data?.rates?.PHP);
+      const latestRateIdr = toNumber(data?.rates?.IDR);
+      if (latestRatePhp > 0) {
+        setFxRatePhp(latestRatePhp);
+      }
+      if (latestRateIdr > 0) {
+        setFxRateIdr(latestRateIdr);
+      }
+      if (latestRatePhp > 0 || latestRateIdr > 0) {
         setFxRateUpdatedAt(data?.date || new Date().toISOString());
         setFxStatus('live');
       }
@@ -424,6 +435,210 @@ const Admin = () => {
       setBudgetInputs(prev => ({ ...prev, [deptId]: '' }));
     } catch (err: any) {
       toast.error(getErrorMessage(err, 'Failed to update budget'));
+    }
+  };
+
+  const updateCategoryBudget = async (categoryId: string, budget: number) => {
+    const token = localStorage.getItem('token');
+    try {
+      await api.put(`/api/budget/categories/${categoryId}`, { budget_amount: budget }, { headers: { Authorization: `Bearer ${token}` } });
+      toast.success('Category budget updated!');
+      if (selectedDepartmentId) {
+        await fetchDepartmentBreakdown(selectedDepartmentId, false, false);
+        await fetchDepartments(false); // Refresh departments list to update Current Total
+      }
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Failed to update category budget'));
+    }
+  };
+
+  const addNewCategory = async () => {
+    const token = localStorage.getItem('token');
+    if (!selectedDepartmentId || !newCategory.category_code || !newCategory.category_name) {
+      toast.error('Please fill in category code and name');
+      return;
+    }
+    try {
+      await api.post('/api/budget/categories', {
+        department_id: selectedDepartmentId,
+        fiscal_year: selectedFiscalYear,
+        category_code: newCategory.category_code.toUpperCase(),
+        category_name: newCategory.category_name,
+        budget_amount: parseFloat(newCategory.budget_amount) || 0
+      }, { headers: { Authorization: `Bearer ${token}` } });
+      toast.success('Category added successfully!');
+      setNewCategory({ category_code: '', category_name: '', budget_amount: '' });
+      setShowAddCategory(false);
+      if (selectedDepartmentId) {
+        await fetchDepartmentBreakdown(selectedDepartmentId, false, false);
+        await fetchDepartments(false); // Refresh to update Current Total
+      }
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Failed to add category'));
+    }
+  };
+
+  const deleteCategory = async (categoryId: string) => {
+    if (!confirm('Are you sure you want to delete this category?')) return;
+    const token = localStorage.getItem('token');
+    try {
+      await api.delete(`/api/budget/categories/${categoryId}`, { headers: { Authorization: `Bearer ${token}` } });
+      toast.success('Category deleted successfully!');
+      if (selectedDepartmentId) {
+        await fetchDepartmentBreakdown(selectedDepartmentId, false, false);
+        await fetchDepartments(false); // Refresh to update Current Total
+      }
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Failed to delete category'));
+    }
+  };
+
+  const getDepartmentCategories = (deptName: string) => {
+    const name = deptName.toLowerCase();
+    
+    if (name.includes('accounting') || name.includes('finance')) {
+      return [
+        { category_code: '6040', category_name: 'Bank Service Charges', budget_amount: 0 },
+        { category_code: '6041', category_name: 'Realized Forex Gain/Loss', budget_amount: 0 },
+        { category_code: '6240', category_name: 'Depreciation Expense', budget_amount: 0 },
+        { category_code: '6340', category_name: 'Interest Expense', budget_amount: 0 },
+        { category_code: '9900', category_name: 'Sundry & Misc', budget_amount: 0 },
+        { category_code: '6350', category_name: 'Taxes & Licenses', budget_amount: 0 },
+        { category_code: '6351', category_name: 'Taxes & Licenses - Business Tax/Licenses', budget_amount: 0 },
+        { category_code: '6352', category_name: 'Taxes & Licenses - Income Tax', budget_amount: 0 },
+      ];
+    }
+    
+    if (name.includes('admin')) {
+      return [
+        { category_code: '6021', category_name: 'Automobile Expense - Automobile Fuel', budget_amount: 0 },
+        { category_code: '6022', category_name: 'Automobile Expense - Parking Fee', budget_amount: 0 },
+        { category_code: '6023', category_name: 'Automobile Expense - Toll Expense', budget_amount: 0 },
+        { category_code: '6024', category_name: 'Automobile Expense - Automobile Repairs', budget_amount: 0 },
+        { category_code: '6026', category_name: 'Automobile Expense - Car Insurance', budget_amount: 0 },
+        { category_code: '6020', category_name: 'Automobile Expense - Automobile Registration', budget_amount: 0 },
+        { category_code: '6330', category_name: 'Insurance Expense', budget_amount: 0 },
+        { category_code: '6650', category_name: 'Postage and Delivery', budget_amount: 0 },
+        { category_code: '6711', category_name: 'Rent Expense - Office Rent Expense', budget_amount: 0 },
+        { category_code: '6720', category_name: 'Repairs and Maintenance', budget_amount: 0 },
+        { category_code: '6861', category_name: 'Utilities - Electricity', budget_amount: 0 },
+        { category_code: '6811', category_name: 'Utilities - Globe', budget_amount: 0 },
+        { category_code: '6812', category_name: 'Utilities - Smart Bills', budget_amount: 0 },
+        { category_code: '6813', category_name: 'Utilities - PLDT Telephone', budget_amount: 0 },
+        { category_code: '6814', category_name: 'Utilities - Internet Subscription', budget_amount: 0 },
+        { category_code: '6860', category_name: 'Utilities - Utilities Others (Aircon etc)', budget_amount: 0 },
+      ];
+    }
+    
+    if (name.includes('hr') || name.includes('human')) {
+      return [
+        // 6010 · Advertising and Promotion
+        { category_code: '6011', category_name: 'Advertising and Promotion - Zoom', budget_amount: 0 },
+        { category_code: '6012', category_name: 'Advertising and Promotion - LinkedIn', budget_amount: 0 },
+        { category_code: '6010', category_name: 'Advertising and Promotion - Other', budget_amount: 0 },
+        // 6430 · Meals and Entertainment
+        { category_code: '6431', category_name: 'Meals and Entertainment - Birthday Celebrations', budget_amount: 0 },
+        { category_code: '6432', category_name: 'Meals and Entertainment - Training Meal', budget_amount: 0 },
+        { category_code: '6435', category_name: "Meals and Entertainment - Valentine's Day Celebration", budget_amount: 0 },
+        { category_code: '6437', category_name: 'Meals and Entertainment - Representation', budget_amount: 0 },
+        { category_code: '6430', category_name: 'Meals and Entertainment - Other', budget_amount: 0 },
+        // 6490 · Office Supplies
+        { category_code: '6491', category_name: 'Office Supplies - Stationery & Supplies', budget_amount: 0 },
+        { category_code: '6492', category_name: 'Office Supplies - Consumable & Pantry/Cleaning', budget_amount: 0 },
+        { category_code: '6493', category_name: 'Office Supplies - Tools & Equipment', budget_amount: 0 },
+        { category_code: '6494', category_name: 'Office Supplies - Fire Extinguisher', budget_amount: 0 },
+        { category_code: '6490', category_name: 'Office Supplies - Other (Furnitures)', budget_amount: 0 },
+        // 6500 · Medical Records and Supplies
+        { category_code: '6501', category_name: 'Medical Expenses', budget_amount: 0 },
+        // 6670 · Professional Fees
+        { category_code: '6670', category_name: 'Professional Fees - Other', budget_amount: 0 },
+        { category_code: '6678', category_name: 'Professional Fees - BIR Compliance Service', budget_amount: 0 },
+        { category_code: '6680', category_name: 'Professional Fees - DOLE Establishment Report & 13th', budget_amount: 0 },
+        { category_code: '6681', category_name: 'Professional Fees - Filing of Annual GIS', budget_amount: 0 },
+        { category_code: '6682', category_name: 'Professional Fees - Fire Safety Inspection Certificate', budget_amount: 0 },
+        { category_code: '6685', category_name: 'Professional Fees - Nominee Directors Service', budget_amount: 0 },
+        { category_code: '6686', category_name: 'Professional Fees - Notarization Fee', budget_amount: 0 },
+        { category_code: '6690', category_name: 'Professional Fees - Posted Transactions', budget_amount: 0 },
+        { category_code: '6691', category_name: 'Professional Fees - Posted Transactions Adjustment', budget_amount: 0 },
+        // 6840 · Travel Expense
+        { category_code: '6845', category_name: 'Travel Expense - Foreign Travel-Airline', budget_amount: 0 },
+        { category_code: '6846', category_name: 'Travel Expense - Foreign Travel-Hotel', budget_amount: 0 },
+        { category_code: '6847', category_name: 'Travel Expense - Local Travel-Airline', budget_amount: 0 },
+        { category_code: '6848', category_name: 'Travel Expense - Local Travel-Hotel', budget_amount: 0 },
+        { category_code: '6840', category_name: 'Travel Expense - Other', budget_amount: 0 },
+        { category_code: '6849', category_name: 'Travel Expense - Indo Representative', budget_amount: 0 },
+        // 6900 · Welfare - Employee
+        { category_code: '6901', category_name: 'Welfare - Employee - Seminar', budget_amount: 0 },
+        { category_code: '6902', category_name: 'Welfare - Employee - HMO Expenses', budget_amount: 0 },
+        { category_code: '6906', category_name: 'Welfare - Employee - Uniform', budget_amount: 0 },
+        { category_code: '6907', category_name: 'Welfare - Employee - Staff Welfare', budget_amount: 0 },
+      ];
+    }
+    
+    if (name.includes('it')) {
+      return [
+        { category_code: '6170', category_name: 'Computer and Internet Expenses', budget_amount: 0 },
+      ];
+    }
+    
+    if (name.includes('sales')) {
+      return [
+        { category_code: '4790', category_name: 'Sales', budget_amount: 0 },
+      ];
+    }
+    
+    // Cost of Goods Sold (Payroll) - for all departments
+    return [
+      { category_code: '66001', category_name: 'Payroll Expense - Executive', budget_amount: 0 },
+      { category_code: '66002', category_name: 'Payroll Expense - Accounting', budget_amount: 0 },
+      { category_code: '66008', category_name: 'Payroll Expense - I.T.', budget_amount: 0 },
+      { category_code: '66012', category_name: 'Phil. Health Insurance', budget_amount: 0 },
+      { category_code: '6606', category_name: 'Social Security Company', budget_amount: 0 },
+    ];
+  };
+
+  const initializeDefaultCategories = async () => {
+    const token = localStorage.getItem('token');
+    if (!selectedDepartmentId || !selectedDepartment) {
+      toast.error('Please select a department first');
+      return;
+    }
+    
+    const defaultCategories = getDepartmentCategories(selectedDepartment.name);
+    
+    try {
+      toast.loading(`Initializing ${defaultCategories.length} categories...`, { id: 'init-cats' });
+      
+      // Get existing categories for this department
+      const existingRes = await api.get(`/api/budget/categories?department_id=${selectedDepartmentId}&fiscal_year=${selectedFiscalYear}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const existingCodes = new Set((existingRes.data || []).map((c: any) => c.category_code));
+      
+      // Only create categories that don't already exist
+      const newCategories = defaultCategories.filter(cat => !existingCodes.has(cat.category_code));
+      
+      if (newCategories.length === 0) {
+        toast.success('All categories already exist!', { id: 'init-cats' });
+        await fetchDepartmentBreakdown(selectedDepartmentId, false, false);
+        return;
+      }
+      
+      const promises = newCategories.map(cat => 
+        api.post('/api/budget/categories', {
+          department_id: selectedDepartmentId,
+          fiscal_year: selectedFiscalYear,
+          category_code: cat.category_code,
+          category_name: cat.category_name,
+          budget_amount: cat.budget_amount
+        }, { headers: { Authorization: `Bearer ${token}` } })
+      );
+      await Promise.all(promises);
+      toast.success(`${newCategories.length} new categories added!`, { id: 'init-cats' });
+      await fetchDepartmentBreakdown(selectedDepartmentId, false, false);
+      await fetchDepartments(false); // Refresh to update Current Total
+    } catch (err: any) {
+      toast.error(getErrorMessage(err, 'Failed to initialize categories'), { id: 'init-cats' });
     }
   };
 
@@ -604,6 +819,11 @@ const Admin = () => {
   const breakdownTotals = selectedBreakdown?.totals;
   const breakdownCounts = selectedBreakdown?.counts;
   const editableBudgetValue = breakdownTotals?.annual_budget ?? toNumber(selectedDepartment?.annual_budget);
+  const categoryAllocatedTotal = (selectedBreakdown?.categories || []).reduce(
+    (sum: number, cat: any) => sum + toNumber(cat.budget_amount),
+    0
+  );
+  const categoryAllocationRemaining = Math.max(0, editableBudgetValue - categoryAllocatedTotal);
   const editableBudgetDepartmentId = selectedDepartment?.id || selectedDepartmentId;
   const activeFiscalYear = availableFiscalYears[0] || selectedFiscalYear || new Date().getFullYear();
 
@@ -621,16 +841,26 @@ const Admin = () => {
     };
   }, [filteredVisibleDepartments]);
 
-  const displayAmount = (value: number) =>
-    displayCurrency === 'USD'
-      ? toUsd(toNumber(value), fxRate)
-      : toNumber(value);
+  const displayAmount = (value: number) => {
+    const numValue = toNumber(value);
+    if (displayCurrency === 'USD') {
+      return toUsd(numValue, fxRatePhp);
+    } else if (displayCurrency === 'IDR') {
+      return toCurrency(numValue, fxRatePhp, fxRateIdr);
+    }
+    return numValue;
+  };
 
   const displayMoney = (value: number) => formatMoney(displayAmount(value), displayCurrency);
-  const secondaryMoney = (value: number) =>
-    displayCurrency === 'PHP'
-      ? formatMoney(toUsd(toNumber(value), fxRate), 'USD')
-      : formatMoney(toNumber(value), 'PHP');
+  const secondaryMoney = (value: number) => {
+    const numValue = toNumber(value);
+    if (displayCurrency === 'PHP') {
+      return formatMoney(toUsd(numValue, fxRatePhp), 'USD');
+    } else if (displayCurrency === 'IDR') {
+      return formatMoney(toUsd(numValue, fxRatePhp), 'USD');
+    }
+    return formatMoney(numValue, 'PHP');
+  };
   const remainingBudget = Math.max(overview.totalBudget - overview.usedBudget, 0);
   const overviewCards = [
     {
@@ -963,10 +1193,13 @@ return (
               <div className="absolute bottom-0 left-0 h-24 w-24 rounded-full bg-[var(--role-secondary)]/5 blur-2xl" />
               <div className="relative flex flex-col gap-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[11px] uppercase tracking-[0.22em] text-[var(--role-text)]/50">Latest USD to PHP</p>
-                    <p className="mt-3 text-4xl font-bold leading-none text-[var(--role-text)]">{fxRate.toFixed(4)}</p>
-                    <p className="mt-2 text-sm text-[var(--role-text)]/60">1 USD = {fxRate.toFixed(4)} PHP</p>
+                  <div className="flex-1">
+                    <p className="text-[11px] uppercase tracking-[0.22em] text-[var(--role-text)]/50">Exchange Rates</p>
+                    <div className="mt-2 space-y-1">
+                      <p className="text-2xl font-bold leading-none text-[var(--role-text)]">{fxRatePhp.toFixed(4)} <span className="text-sm font-normal text-[var(--role-text)]/60">PHP</span></p>
+                      <p className="text-2xl font-bold leading-none text-[var(--role-text)]">{(fxRateIdr / 1000).toFixed(3)}K <span className="text-sm font-normal text-[var(--role-text)]/60">IDR</span></p>
+                    </div>
+                    <p className="mt-2 text-xs text-[var(--role-text)]/60">1 USD = {fxRatePhp.toFixed(4)} PHP = {fxRateIdr.toFixed(0)} IDR</p>
                   </div>
                   <div className="rounded-[22px] border border-[var(--role-border)] bg-[var(--role-accent)] px-3 py-2 text-right">
                     <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--role-text)]/50">Display</p>
@@ -1016,9 +1249,13 @@ return (
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <button
                     className="btn-primary flex-1"
-                    onClick={() => setDisplayCurrency((current) => (current === 'PHP' ? 'USD' : 'PHP'))}
+                    onClick={() => setDisplayCurrency((current) => {
+                      if (current === 'PHP') return 'USD';
+                      if (current === 'USD') return 'IDR';
+                      return 'PHP';
+                    })}
                   >
-                    {displayCurrency === 'PHP' ? 'Convert All to USD' : 'Show All in PHP'}
+                    {displayCurrency === 'PHP' ? 'Convert All to USD' : displayCurrency === 'USD' ? 'Convert All to IDR' : 'Show All in PHP'}
                   </button>
                 </div>
               </div>
@@ -1388,6 +1625,230 @@ return (
                       <div className="rounded-full border border-[var(--role-border)] bg-[var(--role-surface)] px-4 py-2 text-sm text-[var(--role-text)]/70">
                         Current Total: <span className="font-semibold text-[var(--role-text)]">{displayMoney(breakdownTotals.annual_budget)}</span>
                       </div>
+                    </div>
+
+                    {/* Category Breakdown - Streamlined UI */}
+                    <div className="mt-4 p-4 rounded-2xl border border-[var(--role-border)] bg-[var(--role-surface)]">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h4 className="text-sm font-semibold text-[var(--role-text)] flex items-center gap-2">
+                            <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                            </svg>
+                            {selectedDepartment ? `${selectedDepartment.name} Categories` : 'Department Categories'}
+                          </h4>
+                          {selectedDepartment && (
+                            <p className="text-xs text-[var(--role-text)]/50 mt-0.5">
+                              FY{selectedDepartment.fiscal_year} • {displayMoney(editableBudgetValue)} budget • {selectedBreakdown?.categories?.length || 0} categories
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => setShowAddCategory(!showAddCategory)}
+                          className="text-xs bg-emerald-500 text-white px-3 py-1.5 rounded-lg hover:bg-emerald-600 transition-colors flex items-center gap-1"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                          </svg>
+                          {showAddCategory ? 'Cancel' : 'Add'}
+                        </button>
+                      </div>
+
+                      {/* Department Quick Select - Compact */}
+                      <div className="mb-4 flex gap-2 overflow-x-auto pb-2">
+                        {departments
+                          .filter((dept: any) => dept.fiscal_year === 2026)
+                          .map((dept: any) => (
+                            <button
+                              key={dept.id}
+                              onClick={() => {
+                                setSelectedDepartmentId(dept.id);
+                                fetchDepartmentBreakdown(dept.id, true, false);
+                              }}
+                              className={`flex-shrink-0 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                                selectedDepartmentId === dept.id
+                                  ? 'bg-emerald-500 text-white'
+                                  : 'bg-[var(--role-accent)] text-[var(--role-text)] hover:bg-[var(--role-border)]'
+                              }`}
+                            >
+                              {dept.name.split(' ')[0]}
+                            </button>
+                          ))}
+                      </div>
+
+                      {/* Clear All Button - Shows when categories exist */}
+                      {selectedBreakdown?.categories && selectedBreakdown.categories.length > 0 && (
+                        <div className="mb-3 flex gap-2">
+                          <button
+                            onClick={async () => {
+                              if (!confirm('Delete ALL categories for this department? This cannot be undone.')) return;
+                              const token = localStorage.getItem('token');
+                              try {
+                                toast.loading('Clearing categories...', { id: 'clear-cats' });
+                                const promises = selectedBreakdown.categories.map((cat: any) =>
+                                  api.delete(`/api/budget/categories/${cat.id}`, { headers: { Authorization: `Bearer ${token}` } })
+                                );
+                                await Promise.all(promises);
+                                toast.success('All categories cleared!', { id: 'clear-cats' });
+                                await fetchDepartmentBreakdown(selectedDepartmentId, false, false);
+                                await fetchDepartments(false); // Refresh to update Current Total
+                              } catch (err: any) {
+                                toast.error('Failed to clear categories', { id: 'clear-cats' });
+                              }
+                            }}
+                            className="text-xs bg-red-100 text-red-600 px-3 py-1.5 rounded-lg hover:bg-red-200 transition-colors"
+                          >
+                            🗑️ Clear All
+                          </button>
+                          <button
+                            onClick={initializeDefaultCategories}
+                            className="text-xs bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-200 transition-colors"
+                          >
+                            🔄 Reset to Default
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Department Budget Summary - Compact */}
+                      {selectedDepartment && (
+                        <div className="mb-4 flex gap-2 text-xs">
+                          <div className="flex-1 p-2 rounded-lg bg-emerald-50 border border-emerald-100 text-center">
+                            <span className="text-emerald-600 block text-[10px] uppercase">Budget</span>
+                            <span className="font-semibold text-emerald-700">{displayMoney(editableBudgetValue)}</span>
+                          </div>
+                          <div className="flex-1 p-2 rounded-lg bg-amber-50 border border-amber-100 text-center">
+                            <span className="text-amber-600 block text-[10px] uppercase">Allocated</span>
+                            <span className="font-semibold text-amber-700">{displayMoney(categoryAllocatedTotal)}</span>
+                          </div>
+                          <div className="flex-1 p-2 rounded-lg bg-blue-50 border border-blue-100 text-center">
+                            <span className="text-blue-600 block text-[10px] uppercase">Available</span>
+                            <span className="font-semibold text-blue-700">
+                              {displayMoney(categoryAllocationRemaining)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Add New Category Form - Single Row */}
+                      {showAddCategory && (
+                        <div className="mb-4 p-3 rounded-xl border border-[var(--role-border)] bg-[var(--role-accent)]/50">
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              placeholder="Code (e.g., 6170)"
+                              value={newCategory.category_code}
+                              onChange={(e) => setNewCategory(prev => ({ ...prev, category_code: e.target.value.toUpperCase() }))}
+                              className="w-20 px-2 py-1.5 text-sm rounded-lg border border-[var(--role-border)] bg-[var(--role-surface)]"
+                            />
+                            <input
+                              type="text"
+                              placeholder="Category Name"
+                              value={newCategory.category_name}
+                              onChange={(e) => setNewCategory(prev => ({ ...prev, category_name: e.target.value }))}
+                              className="flex-1 px-2 py-1.5 text-sm rounded-lg border border-[var(--role-border)] bg-[var(--role-surface)]"
+                            />
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="₱"
+                              value={newCategory.budget_amount}
+                              onChange={(e) => setNewCategory(prev => ({ ...prev, budget_amount: e.target.value }))}
+                              className="w-24 px-2 py-1.5 text-sm rounded-lg border border-[var(--role-border)] bg-[var(--role-surface)]"
+                            />
+                            <button
+                              onClick={addNewCategory}
+                              disabled={!newCategory.category_code || !newCategory.category_name}
+                              className="px-3 py-1.5 text-sm bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors disabled:opacity-50"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {selectedBreakdown?.categories && selectedBreakdown.categories.length > 0 ? (
+                        <>
+                          <div className="space-y-1 max-h-56 overflow-y-auto">
+                            {selectedBreakdown.categories.map((cat: any) => (
+                              <div 
+                                key={cat.id} 
+                                className="flex items-center gap-2 text-sm py-1.5 px-2 rounded-lg hover:bg-[var(--role-accent)]/30 cursor-pointer"
+                                onClick={() => {
+                                  setNewCategory({
+                                    category_code: cat.category_code,
+                                    category_name: cat.category_name,
+                                    budget_amount: String(cat.budget_amount || 0)
+                                  });
+                                  setShowAddCategory(true);
+                                }}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">{cat.category_code}</span>
+                                    <span className="truncate">{cat.category_name}</span>
+                                  </div>
+                                  <div className="flex items-center gap-3 mt-0.5 text-[10px] text-[var(--role-text)]/50">
+                                    <span>Used: {displayMoney(cat.used_amount)}</span>
+                                    <span>Rem: {displayMoney(cat.remaining_amount)}</span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={budgetInputs[`cat_${cat.id}`] || cat.budget_amount}
+                                    onChange={(e) => setBudgetInputs(prev => ({ ...prev, [`cat_${cat.id}`]: e.target.value }))}
+                                    className="w-20 px-2 py-1 text-right text-xs rounded border border-[var(--role-border)] bg-[var(--role-surface)]"
+                                  />
+                                  <button
+                                    onClick={() => {
+                                      const value = parseFloat(budgetInputs[`cat_${cat.id}`] || cat.budget_amount);
+                                      if (value >= 0) updateCategoryBudget(cat.id, value);
+                                    }}
+                                    className="px-2 py-1 text-[10px] bg-emerald-500 text-white rounded hover:bg-emerald-600"
+                                  >
+                                    ✓
+                                  </button>
+                                  <button
+                                    onClick={() => deleteCategory(cat.id)}
+                                    className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                                    title="Delete"
+                                  >
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="mt-3 pt-2 border-t border-[var(--role-border)]">
+                            <div className="flex justify-between items-center">
+                              <span className="text-xs font-medium text-[var(--role-text)]">Total Allocated</span>
+                              <span className="text-base font-bold text-emerald-600">
+                                {displayMoney(selectedBreakdown.categories.reduce((sum: number, cat: any) => sum + (cat.budget_amount || 0), 0))}
+                              </span>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-center py-6">
+                          <p className="text-sm text-[var(--role-text)]/50 mb-3">No categories defined for this department yet.</p>
+                          {selectedDepartmentId && (
+                            <button
+                              onClick={initializeDefaultCategories}
+                              className="text-xs bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-1 mx-auto"
+                            >
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                              </svg>
+                              Initialize Default Categories (80+)
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="mt-5 flex flex-col gap-3 sm:flex-row">

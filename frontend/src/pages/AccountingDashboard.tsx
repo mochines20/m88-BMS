@@ -775,17 +775,19 @@ const AccountingDashboard = () => {
                         }
                       </p>
                     </div>
-                    <button
-                      onClick={() => toggleOnHold(req.id)}
-                      className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                        req.status === 'on_hold'
-                          ? 'bg-amber-100 text-amber-700 border border-amber-300'
-                          : 'bg-gray-100 text-gray-600 border border-gray-300 hover:bg-amber-50'
-                      }`}
-                      title={req.status === 'on_hold' ? 'Remove from On Hold' : 'Place On Hold'}
-                    >
-                      {req.status === 'on_hold' ? 'On Hold' : 'Hold'}
-                    </button>
+                    {(req.status === 'pending_accounting' || req.status === 'on_hold') && (
+                      <button
+                        onClick={() => toggleOnHold(req.id)}
+                        className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                          req.status === 'on_hold'
+                            ? 'bg-amber-100 text-amber-700 border border-amber-300'
+                            : 'bg-gray-100 text-gray-600 border border-gray-300 hover:bg-amber-50'
+                        }`}
+                        title={req.status === 'on_hold' ? 'Remove from On Hold' : 'Place On Hold'}
+                      >
+                        {req.status === 'on_hold' ? 'On Hold' : 'Hold'}
+                      </button>
+                    )}
                   </div>
                   </div>
                 ))}
