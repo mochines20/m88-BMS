@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
-import { formatMoney, formatDateTime, toNumber } from '../utils/format';
+import { formatMoney, formatDateTime, toNumber, formatActionLabel } from '../utils/format';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -34,6 +34,7 @@ interface AuditLog {
   details?: string;
   request_code?: string;
 }
+
 
 const AccountingDashboard = () => {
   const [user, setUser] = useState<any>(null);
@@ -222,7 +223,7 @@ const AccountingDashboard = () => {
   const fetchAuditLogs = async () => {
     const token = localStorage.getItem('token');
     try {
-      const res = await api.get('/api/audit-logs', {
+      const res = await api.get('/api/requests/audit-logs', {
         headers: { Authorization: `Bearer ${token}` }
       });
       setAuditLogs(res.data || []);
@@ -899,11 +900,14 @@ const AccountingDashboard = () => {
                     onChange={(e) => setAuditFilter(prev => ({ ...prev, action: e.target.value }))}
                   >
                     <option value="all">All Actions</option>
-                    <option value="created">Created</option>
+                    <option value="submitted">Submitted</option>
                     <option value="approved">Approved</option>
+                    <option value="co_approved">Co-Approved</option>
                     <option value="released">Released</option>
                     <option value="rejected">Rejected</option>
                     <option value="returned">Returned</option>
+                    <option value="liquidation_approved">Liquidation Approved</option>
+                    <option value="liquidation_rejected">Liquidation Rejected</option>
                   </select>
                 </div>
                 <div>
@@ -949,8 +953,8 @@ const AccountingDashboard = () => {
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="px-2 py-1 rounded bg-[var(--role-primary)]/10 text-[var(--role-primary)] text-xs font-semibold capitalize">
-                            {log.action}
+                          <span className="px-2 py-1 rounded bg-[var(--role-primary)]/10 text-[var(--role-primary)] text-xs font-semibold">
+                            {formatActionLabel(log.action)}
                           </span>
                           {log.request_code && (
                             <span className="text-sm text-[var(--role-text)]/60">{log.request_code}</span>

@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import { useNavigate } from 'react-router-dom';
-import toast, { Toaster } from 'react-hot-toast';
+import toast from 'react-hot-toast';
 
 type AuthMode = 'signin' | 'signup';
 
@@ -214,7 +214,6 @@ const Login = () => {
 
   return (
     <div className="app-shell flex min-h-screen items-center justify-center px-4 py-10">
-      <Toaster position="top-right" />
       {isAuthBusy && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--role-text)]/10 backdrop-blur-sm">
           <div className="panel w-full max-w-sm text-center">

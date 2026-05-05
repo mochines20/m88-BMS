@@ -26,7 +26,7 @@ router.get('/', authenticate, async (req: any, res) => {
     }
 
     // Filter by employee (for non-finance users, only show own)
-    if (req.user.role === 'employee') {
+    if (req.user.role === 'employee' || req.user.role === 'manager') {
       query = query.eq('employee_id', req.user.id);
     } else if (employee_id) {
       query = query.eq('employee_id', employee_id);
@@ -142,7 +142,7 @@ router.get('/:id', authenticate, async (req: any, res) => {
     }
 
     // Check permission
-    if (req.user.role === 'employee' && cashAdvance.employee_id !== req.user.id) {
+    if ((req.user.role === 'employee' || req.user.role === 'manager') && cashAdvance.employee_id !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -225,7 +225,7 @@ router.post('/', authenticate, authorize('accounting', 'admin', 'super_admin'), 
 });
 
 // POST /api/cash-advances/:id/liquidate - Add liquidation items
-router.post('/:id/liquidate', authenticate, authorize('employee', 'accounting', 'admin', 'super_admin'), async (req: any, res) => {
+router.post('/:id/liquidate', authenticate, authorize('employee', 'manager', 'accounting', 'admin', 'super_admin'), async (req: any, res) => {
   try {
     const { id } = req.params;
     const { items, liquidation_request_id } = req.body;
@@ -243,7 +243,7 @@ router.post('/:id/liquidate', authenticate, authorize('employee', 'accounting', 
     }
 
     // Check permission
-    if (req.user.role === 'employee' && cashAdvance.employee_id !== req.user.id) {
+    if ((req.user.role === 'employee' || req.user.role === 'manager') && cashAdvance.employee_id !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -283,7 +283,7 @@ router.get('/employee/:employee_id', authenticate, async (req: any, res) => {
     const { employee_id } = req.params;
 
     // Check permission
-    if (req.user.role === 'employee' && req.user.id !== employee_id) {
+    if ((req.user.role === 'employee' || req.user.role === 'manager') && req.user.id !== employee_id) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -310,7 +310,7 @@ router.get('/for-liquidation/:employee_id', authenticate, async (req: any, res) 
     const { employee_id } = req.params;
 
     // Check permission
-    if (req.user.role === 'employee' && req.user.id !== employee_id) {
+    if ((req.user.role === 'employee' || req.user.role === 'manager') && req.user.id !== employee_id) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 

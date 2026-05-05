@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import toast from 'react-hot-toast';
 import { formatMoney } from '../utils/format';
+import { supabase } from '../lib/supabase';
 
 type RequestType = 'reimbursement' | 'cash_advance' | 'liquidation';
 
@@ -50,6 +51,27 @@ const NewRequestForm = () => {
   const [selectedAdvance, setSelectedAdvance] = useState<CashAdvance | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
+  const uploadSupportingFile = async (file: File) => {
+    if (!supabase) {
+      throw new Error('Supabase client not initialized. Cannot upload files.');
+    }
+
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${Math.random().toString(36).slice(2)}_${Date.now()}.${fileExt}`;
+    const filePath = `attachments/${fileName}`;
+
+    const { error: uploadError } = await supabase.storage.from('attachments').upload(filePath, file);
+    if (uploadError) throw uploadError;
+
+    const { data: publicData } = supabase.storage.from('attachments').getPublicUrl(filePath);
+    return {
+      file_name: file.name,
+      file_url: publicData.publicUrl,
+      attachment_type: file.type,
+      attachment_scope: 'request'
+    };
+  };
 
   // Reimbursement Form
   const [reimbursementForm, setReimbursementForm] = useState({
@@ -101,9 +123,10 @@ const NewRequestForm = () => {
         const userData = userRes.data;
         setUser(userData);
 
-        // Fetch categories and cost centers (filtered by user's department)
+        // Fetch categories and cost centers (filtered by user's department and fiscal year)
+        const currentFiscalYear = 2026;
         const [categoriesRes, costCentersRes] = await Promise.all([
-          api.get(`/api/budget/categories?department_id=${userData.department_id || ''}`, { headers: { Authorization: `Bearer ${token}` } }),
+          api.get(`/api/budget/categories?department_id=${userData.department_id || ''}&fiscal_year=${currentFiscalYear}`, { headers: { Authorization: `Bearer ${token}` } }),
           api.get(`/api/budget/cost-centers?department_id=${userData.department_id || ''}`, { headers: { Authorization: `Bearer ${token}` } })
         ]);
 
@@ -146,6 +169,30 @@ const NewRequestForm = () => {
     loadData();
   }, [navigate, initialAdvanceId]);
 
+  // Poll for new categories every 5 seconds (so employees see new categories immediately)
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token || !user?.department_id) return;
+
+    const pollCategories = async () => {
+      try {
+        const currentFiscalYear = 2026;
+        const res = await api.get(
+          `/api/budget/categories?department_id=${user.department_id}&fiscal_year=${currentFiscalYear}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        setCategories(res.data || []);
+      } catch {
+        // Silent fail - don't show error for background polling
+      }
+    };
+
+    // Poll every 5 seconds
+    const intervalId = setInterval(pollCategories, 5000);
+    
+    return () => clearInterval(intervalId);
+  }, [user?.department_id]);
+
   // Tab change handler
   useEffect(() => {
     // Reset forms when switching tabs
@@ -169,6 +216,10 @@ const NewRequestForm = () => {
     const token = localStorage.getItem('token');
 
     try {
+      const attachments = reimbursementForm.receipt_file
+        ? [await uploadSupportingFile(reimbursementForm.receipt_file)]
+        : [];
+
       await api.post('/api/requests', {
         request_type: 'reimbursement',
         item_name: reimbursementForm.item_name,
@@ -179,7 +230,14 @@ const NewRequestForm = () => {
         expense_date: reimbursementForm.expense_date,
         cost_center_id: reimbursementForm.cost_center_id,
         project: reimbursementForm.project,
-        priority: 'normal'
+        priority: 'normal',
+        attachments,
+        metadata: {
+          request_type: 'reimbursement',
+          expense_date: reimbursementForm.expense_date,
+          cost_center_id: reimbursementForm.cost_center_id || null,
+          project: reimbursementForm.project || null
+        }
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -252,6 +310,10 @@ const NewRequestForm = () => {
       await api.post(`/api/cash-advances/${selectedAdvance.id}/liquidate`, {
         items: liquidationForm.items
       }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      await api.post(`/api/cash-advances/${selectedAdvance.id}/submit-liquidation`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
@@ -382,7 +444,8 @@ const NewRequestForm = () => {
               <option value="">Select category...</option>
               {categories.map(cat => (
                 <option key={cat.id} value={cat.id}>
-                  {cat.category_code} - {cat.category_name} ({formatMoney(cat.remaining_amount || cat.budget_amount || 0)} remaining)
+                  {cat.category_code} - {cat.category_name}
+                  {user?.role !== 'employee' && ` (${formatMoney(cat.remaining_amount || cat.budget_amount || 0)} remaining)`}
                 </option>
               ))}
             </select>

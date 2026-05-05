@@ -48,9 +48,9 @@ router.get('/filter-options', authenticate, async (req: any, res) => {
     .select('id, name, fiscal_year')
     .order('name', { ascending: true });
 
-  if (req.user.role === 'employee' || req.user.role === 'supervisor') {
+  if (req.user.role === 'employee' || req.user.role === 'manager' || req.user.role === 'supervisor') {
     const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
-    if (req.user.role === 'employee') {
+    if (req.user.role === 'employee' || req.user.role === 'manager') {
       const activeDepartmentId = accessibleDepartmentIds[0] || req.user.department_id;
       requestQuery = requestQuery.eq('department_id', activeDepartmentId);
       departmentQuery = departmentQuery.eq('id', activeDepartmentId);
@@ -113,7 +113,7 @@ router.get('/summary', authenticate, async (req: any, res) => {
   const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
   const { dept, from, to, status, category, fiscal_year, archived = 'false', format } = req.query;
   let query = supabase.from('expense_requests').select(REQUESTS_DEPARTMENT_SELECT);
-  if (req.user.role === 'employee') query = query.eq('employee_id', req.user.id);
+  if (req.user.role === 'employee' || req.user.role === 'manager') query = query.eq('employee_id', req.user.id);
   else if (req.user.role === 'supervisor') {
     const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
     query = accessibleDepartmentIds.length
@@ -182,7 +182,7 @@ router.get('/requests', authenticate, async (req: any, res) => {
   const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
   const { dept, from, to, status, category, fiscal_year, archived = 'false', format } = req.query;
   let query = supabase.from('expense_requests').select(REQUESTS_REPORT_SELECT);
-  if (req.user.role === 'employee') query = query.eq('employee_id', req.user.id);
+  if (req.user.role === 'employee' || req.user.role === 'manager') query = query.eq('employee_id', req.user.id);
   else if (req.user.role === 'supervisor') {
     const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
     query = accessibleDepartmentIds.length

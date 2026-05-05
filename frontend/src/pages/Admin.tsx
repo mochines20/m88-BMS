@@ -119,6 +119,8 @@ const Admin = () => {
   const [selectedBreakdown, setSelectedBreakdown] = useState<any>(null);
   const [recentRequestsPage, setRecentRequestsPage] = useState(1);
   const [recentPettyPage, setRecentPettyPage] = useState(1);
+  const [categoryPage, setCategoryPage] = useState(1);
+  const CATEGORY_PAGE_SIZE = 5;
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const RECENT_PAGE_SIZE = 4;
@@ -313,6 +315,9 @@ const Admin = () => {
 
   useEffect(() => {
     if (!selectedDepartmentId) return;
+    
+    // Reset category page when department changes
+    setCategoryPage(1);
 
     fetchDepartmentBreakdown(selectedDepartmentId, true, false);
 
@@ -967,6 +972,7 @@ const Admin = () => {
                         onChange={(e) => setManagedUsers((current) => current.map((entry) => entry.id === managedUser.id ? { ...entry, role: e.target.value } : entry))}
                       >
                         <option value="employee">Employee</option>
+                        <option value="manager">Manager</option>
                         <option value="supervisor">Supervisor</option>
                         <option value="accounting">Accounting</option>
                         <option value="management">Management</option>
@@ -1613,6 +1619,113 @@ return (
                       </div>
                     </div>
                   </div>
+
+                  {/* Category Budget Breakdown - Shows budget per category and total */}
+                  {selectedBreakdown?.categories && selectedBreakdown.categories.length > 0 && (
+                    <div className="rounded-[28px] border border-[var(--role-border)] bg-[var(--role-accent)] p-5">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between mb-4">
+                        <div>
+                          <h3 className="text-lg font-semibold text-[var(--role-text)] flex items-center gap-2">
+                            <svg className="w-5 h-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                            </svg>
+                            Category Budget Breakdown
+                          </h3>
+                          <p className="mt-1 text-sm text-[var(--role-text)]/70">
+                            Budget allocated per category and usage tracking
+                          </p>
+                        </div>
+                        <div className="rounded-full border border-[var(--role-border)] bg-[var(--role-surface)] px-4 py-2 text-sm text-[var(--role-text)]/70">
+                          Total from Categories: <span className="font-semibold text-emerald-600">{displayMoney(selectedBreakdown.categories.reduce((sum: number, cat: any) => sum + (cat.budget_amount || 0), 0))}</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        {selectedBreakdown.categories
+                          .slice((categoryPage - 1) * CATEGORY_PAGE_SIZE, categoryPage * CATEGORY_PAGE_SIZE)
+                          .map((cat: any) => {
+                          const budget = toNumber(cat.budget_amount);
+                          const used = toNumber(cat.used_amount);
+                          const remaining = toNumber(cat.remaining_amount);
+                          const usedPct = budget > 0 ? (used / budget) * 100 : 0;
+                          
+                          return (
+                            <div key={cat.id} className="rounded-xl border border-[var(--role-border)] bg-[var(--role-surface)] p-4">
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded">{cat.category_code}</span>
+                                  <span className="font-medium text-[var(--role-text)]">{cat.category_name}</span>
+                                </div>
+                                <span className="text-sm font-semibold text-[var(--role-text)]">{displayMoney(budget)}</span>
+                              </div>
+                              
+                              {/* Progress Bar */}
+                              <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
+                                <div 
+                                  className="bg-emerald-500 h-2 rounded-full transition-all" 
+                                  style={{ width: `${Math.min(usedPct, 100)}%` }}
+                                />
+                              </div>
+                              
+                              <div className="flex items-center justify-between text-xs text-[var(--role-text)]/70">
+                                <span>Used: <span className="font-medium text-amber-600">{displayMoney(used)}</span> ({usedPct.toFixed(1)}%)</span>
+                                <span>Remaining: <span className="font-medium text-emerald-600">{displayMoney(remaining)}</span></span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Pagination */}
+                      {selectedBreakdown.categories.length > CATEGORY_PAGE_SIZE && (
+                        <div className="mt-4 flex items-center justify-between rounded-xl border border-[var(--role-border)] bg-[var(--role-surface)] px-4 py-2">
+                          <p className="text-xs text-[var(--role-text)]/60">
+                            Page {categoryPage} of {Math.ceil(selectedBreakdown.categories.length / CATEGORY_PAGE_SIZE)}
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setCategoryPage(p => Math.max(1, p - 1))}
+                              disabled={categoryPage === 1}
+                              className="btn-secondary !px-3 !py-1 !text-xs disabled:opacity-50"
+                            >
+                              ← Previous
+                            </button>
+                            <button
+                              onClick={() => setCategoryPage(p => Math.min(Math.ceil(selectedBreakdown.categories.length / CATEGORY_PAGE_SIZE), p + 1))}
+                              disabled={categoryPage >= Math.ceil(selectedBreakdown.categories.length / CATEGORY_PAGE_SIZE)}
+                              className="btn-secondary !px-3 !py-1 !text-xs disabled:opacity-50"
+                            >
+                              Next →
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Summary Footer */}
+                      <div className="mt-4 pt-4 border-t border-[var(--role-border)]">
+                        <div className="grid grid-cols-3 gap-4 text-center">
+                          <div>
+                            <p className="text-xs text-[var(--role-text)]/60">Total Budget</p>
+                            <p className="text-lg font-bold text-[var(--role-text)]">
+                              {displayMoney(selectedBreakdown.categories.reduce((sum: number, cat: any) => sum + toNumber(cat.budget_amount), 0))}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-[var(--role-text)]/60">Total Used</p>
+                            <p className="text-lg font-bold text-amber-600">
+                              {displayMoney(selectedBreakdown.categories.reduce((sum: number, cat: any) => sum + toNumber(cat.used_amount), 0))}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-[var(--role-text)]/60">Total Remaining</p>
+                            <p className="text-lg font-bold text-emerald-600">
+                              {displayMoney(selectedBreakdown.categories.reduce((sum: number, cat: any) => sum + toNumber(cat.remaining_amount), 0))}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="rounded-[28px] border border-[var(--role-border)] bg-[var(--role-accent)] p-5">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">

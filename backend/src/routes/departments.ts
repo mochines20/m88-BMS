@@ -13,7 +13,7 @@ const normalizeDepartmentName = (value: string) => String(value || '').trim();
 router.get('/', authenticate, async (req: any, res) => {
   let departmentQuery = supabase.from('departments').select('*');
 
-  if (req.user.role === 'employee' || req.user.role === 'supervisor') {
+  if (req.user.role === 'employee' || req.user.role === 'manager' || req.user.role === 'supervisor') {
     const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
     const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
 

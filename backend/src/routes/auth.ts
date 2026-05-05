@@ -418,8 +418,8 @@ router.get('/signup-departments', async (_req, res) => {
 
 // PATCH /api/auth/profile
 router.patch('/profile', authenticate, async (req: any, res) => {
-  if (req.user.role !== 'employee' && req.user.role !== 'supervisor') {
-    return res.status(403).json({ error: 'Only employees and supervisors can update their own department.' });
+  if (req.user.role !== 'employee' && req.user.role !== 'manager' && req.user.role !== 'supervisor') {
+    return res.status(403).json({ error: 'Only employees, managers, and supervisors can update their own department.' });
   }
 
   const { name, department_id } = req.body as {
@@ -439,7 +439,7 @@ router.patch('/profile', authenticate, async (req: any, res) => {
     return res.status(400).json({ error: departmentError || 'Selected department was not found.' });
   }
 
-  if (req.user.role === 'employee' || req.user.role === 'supervisor') {
+  if (req.user.role === 'employee' || req.user.role === 'manager' || req.user.role === 'supervisor') {
     const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
     const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
     if (!accessibleDepartmentIds.includes(department.id)) {
@@ -610,7 +610,7 @@ router.patch('/users/:id', authenticate, async (req: any, res) => {
     return res.status(400).json({ error: 'Name and role are required.' });
   }
 
-  if (!['employee', 'supervisor', 'accounting', 'management', 'admin', 'super_admin'].includes(normalizedRole)) {
+  if (!['employee', 'manager', 'supervisor', 'accounting', 'management', 'admin', 'super_admin'].includes(normalizedRole)) {
     console.log('Role validation failed for:', normalizedRole);
     return res.status(400).json({ error: 'Invalid role.' });
   }

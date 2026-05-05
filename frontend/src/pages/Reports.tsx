@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
+import { toNumber, formatMoney } from '../utils/format';
 
 interface DepartmentOption {
   id: string;
@@ -37,6 +38,7 @@ const toCanonicalDepartmentName = (value: string) => {
   if (!normalizedValue) return '';
   return LEGACY_TO_CANONICAL_DEPARTMENT[normalizeDepartmentKey(normalizedValue)] || normalizedValue;
 };
+
 
 const normalizeFilterOptions = (raw: Partial<ReportFilterOptions> | null | undefined): ReportFilterOptions => {
   const uniqueDepartments = new Map<string, DepartmentOption>();
@@ -91,6 +93,23 @@ const Reports = () => {
   const [cashAdvanceAging, setCashAdvanceAging] = useState<any[]>([]);
   const [agingSummary, setAgingSummary] = useState<any>(null);
   const [agingLoaded, setAgingLoaded] = useState(false);
+  const [budgetMonitoring, setBudgetMonitoring] = useState<any[]>([]);
+  const [budgetMonitoringLoaded, setBudgetMonitoringLoaded] = useState(false);
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
+  
+  // Track filter changes for auto-refresh indicator
+  const [lastFetchedFilters, setLastFetchedFilters] = useState(filters);
+  const filtersChanged = JSON.stringify(filters) !== JSON.stringify(lastFetchedFilters);
+  
+  // Archive confirmation state
+  const [archiveConfirm, setArchiveConfirm] = useState<{
+    isOpen: boolean;
+    requestId: string;
+    archived: boolean;
+  }>({ isOpen: false, requestId: '', archived: false });
 
   const getAuthHeaders = () => {
     const token = localStorage.getItem('token');
@@ -103,6 +122,24 @@ const Reports = () => {
       setUser(res.data);
     } catch {
       // User not authenticated
+    }
+  };
+
+  const fetchBudgetMonitoring = async () => {
+    try {
+      const params = new URLSearchParams({
+        fiscal_year: filters.fiscal_year || String(new Date().getFullYear()),
+        ...(filters.dept ? { department_id: filters.dept } : {})
+      });
+      const res = await api.get(`/api/budget/monitoring?${params.toString()}`, {
+        headers: getAuthHeaders()
+      });
+      setBudgetMonitoring(res.data || []);
+      setBudgetMonitoringLoaded(true);
+    } catch {
+      setBudgetMonitoring([]);
+      setBudgetMonitoringLoaded(true);
+      toast.error('Failed to fetch budget monitoring data');
     }
   };
 
@@ -205,6 +242,7 @@ const Reports = () => {
     void fetchUser();
     void fetchFilterOptions();
     void fetchSummary();
+    void fetchBudgetMonitoring();
   }, []);
 
   useEffect(() => {
@@ -261,13 +299,7 @@ const Reports = () => {
     }
   };
 
-  const formatMoney = (value: number) =>
-    new Intl.NumberFormat('en-PH', {
-      style: 'currency',
-      currency: 'PHP',
-      minimumFractionDigits: 2
-    }).format(value);
-
+  
   const chartColors = [
     'var(--role-primary)',
     'var(--role-secondary)',
@@ -305,16 +337,165 @@ const Reports = () => {
     return acc;
   }, []).filter((d: {value: number}) => d.value > 0);
 
+  const trialBalanceRows = Object.values(
+    budgetMonitoring.reduce((acc: Record<string, any>, row: any) => {
+      const key = `${row.department_id || 'unknown'}::${row.department_name || 'Unknown Department'}`;
+      if (!acc[key]) {
+        acc[key] = {
+          department_name: row.department_name || 'Unknown Department',
+          budget: 0,
+          actual: 0,
+          committed: 0,
+          remaining: 0
+        };
+      }
+      acc[key].budget += toNumber(row.budget);
+      acc[key].actual += toNumber(row.actual);
+      acc[key].committed += toNumber(row.committed);
+      acc[key].remaining += toNumber(row.remaining);
+      return acc;
+    }, {})
+  ) as any[];
+
+  const trialBalanceTotals = trialBalanceRows.reduce(
+    (totals, row) => ({
+      budget: totals.budget + toNumber(row.budget),
+      actual: totals.actual + toNumber(row.actual),
+      committed: totals.committed + toNumber(row.committed),
+      remaining: totals.remaining + toNumber(row.remaining)
+    }),
+    { budget: 0, actual: 0, committed: 0, remaining: 0 }
+  );
+
+  const profitLossRows = trialBalanceRows.map((row) => ({
+    department_name: row.department_name,
+    budget: toNumber(row.budget),
+    expense_actual: toNumber(row.actual),
+    expense_committed: toNumber(row.committed),
+    variance: toNumber(row.budget) - (toNumber(row.actual) + toNumber(row.committed)),
+    variance_pct: toNumber(row.budget) > 0
+      ? (((toNumber(row.budget) - (toNumber(row.actual) + toNumber(row.committed))) / toNumber(row.budget)) * 100)
+      : 0
+  }));
+
   const archiveRequest = async (requestId: string, archived: boolean) => {
+    setArchiveConfirm({ isOpen: true, requestId, archived });
+  };
+  
+  const confirmArchive = async () => {
+    const { requestId, archived } = archiveConfirm;
     try {
       await api.patch(`/api/requests/${requestId}/archive`, { archived }, { headers: getAuthHeaders() });
       toast.success(`Request ${archived ? 'archived' : 'unarchived'} successfully!`);
-      // Refresh the requests data
+      setArchiveConfirm({ isOpen: false, requestId: '', archived: false });
       void fetchRequests();
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Archive operation failed');
     }
   };
+
+  // Export Trial Balance to PDF
+  const exportTrialBalanceToPDF = () => {
+    const doc = new jsPDF();
+    doc.setFontSize(18);
+    doc.text('Trial Balance Report', 14, 22);
+    doc.setFontSize(10);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
+    doc.text(`Fiscal Year: ${filters.fiscal_year || 'All'}`, 14, 36);
+
+    autoTable(doc, {
+      startY: 42,
+      head: [['Department', 'Budget (Dr)', 'Actual (Cr)', 'Committed', 'Remaining']],
+      body: [
+        ...trialBalanceRows.map(row => [
+          row.department_name,
+          formatMoney(toNumber(row.budget)),
+          formatMoney(toNumber(row.actual)),
+          formatMoney(toNumber(row.committed)),
+          formatMoney(toNumber(row.remaining))
+        ]),
+        ['TOTAL', 
+          formatMoney(trialBalanceTotals.budget),
+          formatMoney(trialBalanceTotals.actual),
+          formatMoney(trialBalanceTotals.committed),
+          formatMoney(trialBalanceTotals.remaining)
+        ]
+      ],
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [49, 72, 122] }
+    });
+
+    doc.save(`trial-balance-${new Date().toISOString().slice(0, 10)}.pdf`);
+    toast.success('Trial Balance exported to PDF');
+  };
+
+  // Export P&L to PDF
+  const exportPLToPDF = () => {
+    const doc = new jsPDF();
+    doc.setFontSize(18);
+    doc.text('P&L by Department', 14, 22);
+    doc.setFontSize(10);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
+    doc.text(`Fiscal Year: ${filters.fiscal_year || 'All'}`, 14, 36);
+
+    autoTable(doc, {
+      startY: 42,
+      head: [['Department', 'Budget', 'Actual Expense', 'Committed', 'Variance', 'Variance %']],
+      body: profitLossRows.map(row => [
+        row.department_name,
+        formatMoney(row.budget),
+        formatMoney(row.expense_actual),
+        formatMoney(row.expense_committed),
+        formatMoney(row.variance),
+        `${row.variance_pct.toFixed(1)}%`
+      ]),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [49, 72, 122] }
+    });
+
+    doc.save(`pnl-report-${new Date().toISOString().slice(0, 10)}.pdf`);
+    toast.success('P&L Report exported to PDF');
+  };
+
+  // Pagination helper
+  const paginatedRequests = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return requests.slice(startIndex, startIndex + pageSize);
+  }, [requests, currentPage]);
+
+  const totalPages = Math.ceil(requests.length / pageSize);
+
+  // Reset to first page when requests change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filters.dept, filters.fiscal_year, filters.status, filters.category, filters.archived]);
+
+  const Pagination = () => (
+    <div className="flex items-center justify-between mt-4 pt-4 border-t border-[var(--role-border)]">
+      <p className="text-sm text-[var(--role-text)]/60">
+        Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, requests.length)} of {requests.length} requests
+      </p>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+          disabled={currentPage === 1}
+          className="px-3 py-1.5 rounded-lg border border-[var(--role-border)] bg-[var(--role-accent)] text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--role-accent)]/80 transition"
+        >
+          Previous
+        </button>
+        <span className="text-sm text-[var(--role-text)]/80 px-2">
+          Page {currentPage} of {totalPages}
+        </span>
+        <button
+          onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+          disabled={currentPage === totalPages || totalPages === 0}
+          className="px-3 py-1.5 rounded-lg border border-[var(--role-border)] bg-[var(--role-accent)] text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--role-accent)]/80 transition"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="text-[var(--role-text)]">
@@ -391,9 +572,18 @@ const Reports = () => {
             ))}
           </select>
         </div>
-        <div className="mt-5 flex flex-wrap gap-3">
-          <button onClick={fetchSummary} className="btn-primary">Generate Summary</button>
-          <button onClick={fetchRequests} className="btn-secondary">View Requests</button>
+        <div className="mt-5 flex flex-wrap gap-3 items-center">
+          <button 
+            onClick={() => { setLastFetchedFilters(filters); fetchSummary(); fetchRequests(); }} 
+            className={`btn-primary ${filtersChanged ? 'ring-2 ring-amber-400 animate-pulse' : ''}`}
+          >
+            {filtersChanged ? '↻ Refresh with New Filters' : 'Generate Summary'}
+          </button>
+          {filtersChanged && (
+            <span className="text-sm text-amber-600 font-medium">
+              Filters changed — click refresh to update
+            </span>
+          )}
           <button onClick={() => exportReport('pdf')} className="btn-secondary">Export PDF</button>
           <button onClick={() => exportReport('excel')} className="btn-secondary">Export Excel</button>
         </div>
@@ -421,6 +611,7 @@ const Reports = () => {
               <p className="mt-2 text-[var(--role-text)]/60">Total Amount</p>
             </div>
           </div>
+
         </div>
       )}
 
@@ -515,6 +706,112 @@ const Reports = () => {
               })}
             </div>
           </div>
+
+        </div>
+      )}
+
+      {activeTab === 'requests' && (
+        <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div className="panel lg:col-span-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-[var(--role-text)]">Trial Balance (Budget Ledger View)</h3>
+              {trialBalanceRows.length > 0 && (
+                <button
+                  onClick={() => exportTrialBalanceToPDF()}
+                  className="btn-secondary !py-1.5 !px-3 !text-xs"
+                >
+                  Export PDF
+                </button>
+              )}
+            </div>
+            {!budgetMonitoringLoaded ? (
+              <p className="mt-3 text-sm text-[var(--role-text)]/60">Loading trial balance...</p>
+            ) : trialBalanceRows.length === 0 ? (
+              <p className="mt-3 text-sm text-[var(--role-text)]/60">No budget monitoring data found for the selected filters.</p>
+            ) : (
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-sm text-[var(--role-text)]">
+                  <thead>
+                    <tr className="table-header">
+                      <th className="p-3 text-left">Department</th>
+                      <th className="p-3 text-right">Budget (Dr)</th>
+                      <th className="p-3 text-right">Actual (Cr)</th>
+                      <th className="p-3 text-right">Committed</th>
+                      <th className="p-3 text-right">Remaining</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trialBalanceRows.map((row) => (
+                      <tr key={row.department_name} className="table-row">
+                        <td className="p-3 font-medium">{row.department_name}</td>
+                        <td className="p-3 text-right">{formatMoney(toNumber(row.budget))}</td>
+                        <td className="p-3 text-right">{formatMoney(toNumber(row.actual))}</td>
+                        <td className="p-3 text-right">{formatMoney(toNumber(row.committed))}</td>
+                        <td className="p-3 text-right">{formatMoney(toNumber(row.remaining))}</td>
+                      </tr>
+                    ))}
+                    <tr className="font-bold border-t border-[var(--role-border)]">
+                      <td className="p-3">TOTAL</td>
+                      <td className="p-3 text-right">{formatMoney(trialBalanceTotals.budget)}</td>
+                      <td className="p-3 text-right">{formatMoney(trialBalanceTotals.actual)}</td>
+                      <td className="p-3 text-right">{formatMoney(trialBalanceTotals.committed)}</td>
+                      <td className="p-3 text-right">{formatMoney(trialBalanceTotals.remaining)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="panel lg:col-span-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-[var(--role-text)]">P&L by Department (Expense Variance)</h3>
+              {profitLossRows.length > 0 && (
+                <button
+                  onClick={() => exportPLToPDF()}
+                  className="btn-secondary !py-1.5 !px-3 !text-xs"
+                >
+                  Export PDF
+                </button>
+              )}
+            </div>
+            {!budgetMonitoringLoaded ? (
+              <p className="mt-3 text-sm text-[var(--role-text)]/60">Loading P&L variance...</p>
+            ) : profitLossRows.length === 0 ? (
+              <p className="mt-3 text-sm text-[var(--role-text)]/60">No variance rows to display yet.</p>
+            ) : (
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-sm text-[var(--role-text)]">
+                  <thead>
+                    <tr className="table-header">
+                      <th className="p-3 text-left">Department</th>
+                      <th className="p-3 text-right">Budget</th>
+                      <th className="p-3 text-right">Actual Expense</th>
+                      <th className="p-3 text-right">Committed Expense</th>
+                      <th className="p-3 text-right">Variance</th>
+                      <th className="p-3 text-right">Variance %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {profitLossRows.map((row) => (
+                      <tr key={`pl-${row.department_name}`} className="table-row">
+                        <td className="p-3 font-medium">{row.department_name}</td>
+                        <td className="p-3 text-right">{formatMoney(row.budget)}</td>
+                        <td className="p-3 text-right">{formatMoney(row.expense_actual)}</td>
+                        <td className="p-3 text-right">{formatMoney(row.expense_committed)}</td>
+                        <td className={`p-3 text-right font-semibold ${row.variance < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                          {formatMoney(row.variance)}
+                        </td>
+                        <td className={`p-3 text-right font-semibold ${row.variance_pct < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                          {row.variance_pct.toFixed(1)}%
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -545,7 +842,7 @@ const Reports = () => {
                 </tr>
               </thead>
               <tbody>
-                {requests.map((req) => (
+                {paginatedRequests.map((req) => (
                   <tr key={req.id} className="table-row">
                     <td className="p-4">{req.request_code}</td>
                     <td className="p-4">{req.users?.name || 'Unknown sender'}</td>
@@ -575,6 +872,7 @@ const Reports = () => {
               </tbody>
             </table>
           </div>
+          <Pagination />
         </div>
       )}
 
@@ -687,6 +985,36 @@ const Reports = () => {
             )}
           </div>
         </>
+      )}
+      
+      {/* Archive Confirmation Modal */}
+      {archiveConfirm.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="panel w-full max-w-md">
+            <h3 className="text-xl font-bold text-[var(--role-text)] mb-4">
+              {archiveConfirm.archived ? 'Archive Request?' : 'Unarchive Request?'}
+            </h3>
+            <p className="text-[var(--role-text)]/80 mb-6">
+              {archiveConfirm.archived 
+                ? 'Are you sure you want to archive this request? Archived requests are hidden from default views but can still be accessed.'
+                : 'Are you sure you want to unarchive this request? It will reappear in default views.'}
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setArchiveConfirm({ isOpen: false, requestId: '', archived: false })}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmArchive}
+                className={archiveConfirm.archived ? 'btn-danger' : 'btn-success'}
+              >
+                {archiveConfirm.archived ? 'Archive' : 'Unarchive'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

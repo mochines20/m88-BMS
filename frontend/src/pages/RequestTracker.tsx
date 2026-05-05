@@ -4,39 +4,8 @@ import api from '../api';
 import toast from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import FilePreviewer from '../components/FilePreviewer';
-import { formatMoney, toNumber } from '../utils/format';
+import { formatMoney, toNumber, getStatusLabel, getStatusColor } from '../utils/format';
 import jsPDF from 'jspdf';
-
-const getStatusLabel = (status: string) => {
-  switch (status) {
-    case 'pending_supervisor':
-      return 'Waiting for Supervisor Approval';
-    case 'pending_accounting':
-      return 'Waiting for Accounting Approval';
-    case 'returned_for_revision':
-      return 'Returned for Revision';
-    case 'released':
-      return 'Released';
-    case 'approved':
-      return 'Approved';
-    case 'rejected':
-      return 'Rejected';
-    default:
-      return status.replace(/_/g, ' ');
-  }
-};
-
-const getStatusColor = (status: string) => {
-  switch (status) {
-    case 'pending_supervisor': return 'border-[var(--role-secondary)]/30 bg-[var(--role-secondary)]/10 text-[var(--role-text)]';
-    case 'pending_accounting': return 'border-[var(--role-primary)]/30 bg-[var(--role-primary)]/10 text-[var(--role-text)]';
-    case 'approved':
-    case 'released': return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700';
-    case 'returned_for_revision': return 'border-orange-500/30 bg-orange-500/10 text-orange-700';
-    case 'rejected': return 'border-red-500/30 bg-red-500/10 text-red-700';
-    default: return 'border-[var(--role-border)] bg-[var(--role-accent)] text-[var(--role-text)]';
-  }
-};
 
 const buildFlow = (status: string) => [
   {
@@ -76,6 +45,10 @@ const RequestTracker = () => {
   const [dateStart, setDateStart] = useState('');
   const [dateEnd, setDateEnd] = useState('');
   const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
 
   const filteredRequests = useMemo(() => {
     let filtered = [...requests];
@@ -113,9 +86,22 @@ const RequestTracker = () => {
 
     return filtered;
   }, [requests, searchQuery, statusFilter, sortBy, dateStart, dateEnd]);
+  
+  // Pagination
+  const paginatedRequests = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return filteredRequests.slice(startIndex, startIndex + pageSize);
+  }, [filteredRequests, currentPage]);
+  
+  const totalPages = Math.max(1, Math.ceil(filteredRequests.length / pageSize));
+  
+  // Reset to first page when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, statusFilter, dateStart, dateEnd]);
 
   const exportToCSV = () => {
-    const headers = ['Request Code', 'Item Name', 'Category', 'Amount', 'Status', 'Submitted At', 'Priority'];
+    const headers = ['Request Code', 'Item Name', 'Category', 'Amount', 'Status', 'Submitted At', 'Priority', 'Attachment Count'];
     const rows = filteredRequests.map(req => [
       req.request_code,
       req.item_name,
@@ -123,7 +109,8 @@ const RequestTracker = () => {
       req.amount,
       req.status,
       new Date(req.submitted_at).toLocaleString(),
-      req.priority
+      req.priority,
+      Array.isArray(req.attachments) ? req.attachments.length : 0
     ]);
 
     const csvContent = [
@@ -387,7 +374,7 @@ const RequestTracker = () => {
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <div className="space-y-4">
-          {filteredRequests.map((req) => (
+          {paginatedRequests.map((req) => (
             <div
               key={req.id}
               className={`panel cursor-pointer transition hover:border-[var(--role-secondary)]/30 ${selectedRequest?.id === req.id ? 'border-[var(--role-primary)]/40 bg-[var(--role-accent)] shadow-md' : ''}`}
@@ -400,9 +387,15 @@ const RequestTracker = () => {
                   <h2 className="text-xl font-bold text-[var(--role-text)]">{req.item_name}</h2>
                   <p className="mt-1 text-sm text-[var(--role-text)]/70">{formatMoney(toNumber(req.amount))} • {req.category}</p>
                   <p className="mt-2 text-sm font-medium text-[var(--role-text)]/80">{getStatusLabel(req.status)}</p>
+                  {Array.isArray(req.attachments) && req.attachments.length > 0 && (
+                    <p className="mt-1 text-xs uppercase tracking-[0.12em] text-[var(--role-text)]/50">
+                      {req.attachments.length} supporting file{req.attachments.length > 1 ? 's' : ''}
+                    </p>
+                  )}
                 </div>
                 <span className={`badge ${getStatusColor(req.status)}`}>{getStatusLabel(req.status)}</span>
               </div>
+              
               <div className="rounded-[22px] border border-[var(--role-border)] bg-[var(--role-bg-0)] p-3">
                 <div className="mb-3 h-2 overflow-hidden rounded-full bg-[var(--role-border)]/20">
                   <div className="flex h-full w-full">
@@ -434,6 +427,34 @@ const RequestTracker = () => {
               </div>
             </div>
           ))}
+          
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between pt-4 border-t border-[var(--role-border)]">
+              <p className="text-sm text-[var(--role-text)]/60">
+                Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, filteredRequests.length)} of {filteredRequests.length} requests
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1.5 rounded-lg border border-[var(--role-border)] bg-[var(--role-accent)] text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--role-accent)]/80 transition"
+                >
+                  Previous
+                </button>
+                <span className="text-sm text-[var(--role-text)]/80 px-2">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-1.5 rounded-lg border border-[var(--role-border)] bg-[var(--role-accent)] text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--role-accent)]/80 transition"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {selectedRequest && (
@@ -501,20 +522,30 @@ const RequestTracker = () => {
               <div className="mt-4">
                 <h3 className="text-lg font-bold text-[var(--role-text)]">Supporting Documents</h3>
                 <div className="mt-3 space-y-3">
-                  {selectedRequest.attachments.map((attachment: any) => (
-                    <div key={attachment.id} className="panel-muted flex items-center justify-between gap-4 bg-white/40">
-                      <div>
-                        <p className="font-bold text-[var(--role-text)]">{attachment.file_name}</p>
-                        <p className="mt-1 text-sm uppercase tracking-[0.12em] text-[var(--role-text)]/50">{attachment.attachment_type || attachment.attachment_scope}</p>
+                  {['request', 'disbursement', 'liquidation'].map((scope) => {
+                    const scoped = (selectedRequest.attachments || []).filter((attachment: any) => attachment.attachment_scope === scope);
+                    if (scoped.length === 0) return null;
+
+                    return (
+                      <div key={scope} className="space-y-2">
+                        <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--role-text)]/50">{scope} attachments</p>
+                        {scoped.map((attachment: any) => (
+                          <div key={attachment.id} className="panel-muted flex items-center justify-between gap-4 bg-white/40">
+                            <div>
+                              <p className="font-bold text-[var(--role-text)]">{attachment.file_name}</p>
+                              <p className="mt-1 text-sm uppercase tracking-[0.12em] text-[var(--role-text)]/50">{attachment.attachment_type || attachment.attachment_scope}</p>
+                            </div>
+                            <button 
+                              className="btn-secondary" 
+                              onClick={() => setPreviewFile({ url: attachment.file_url, name: attachment.file_name })}
+                            >
+                              Preview
+                            </button>
+                          </div>
+                        ))}
                       </div>
-                      <button 
-                        className="btn-secondary" 
-                        onClick={() => setPreviewFile({ url: attachment.file_url, name: attachment.file_name })}
-                      >
-                        Preview
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -523,7 +554,7 @@ const RequestTracker = () => {
               <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="panel-muted bg-white/40">
                   <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/50 font-bold">Release Method</p>
-                  <p className="mt-2 text-lg font-bold text-[var(--role-text)] capitalize">{selectedRequest.release_method.replace(/_/g, ' ')}</p>
+                  <p className="mt-2 text-lg font-bold capitalize text-[var(--role-text)]">{selectedRequest.release_method.replace(/_/g, ' ')}</p>
                 </div>
                 <div className="panel-muted bg-white/40">
                   <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/50 font-bold">Reference</p>

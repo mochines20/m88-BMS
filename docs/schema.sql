@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
-  role TEXT CHECK (role IN ('employee', 'supervisor', 'accounting', 'management', 'admin', 'super_admin')) NOT NULL,
+  role TEXT CHECK (role IN ('employee', 'manager', 'supervisor', 'accounting', 'management', 'admin', 'super_admin')) NOT NULL,
   department_id UUID,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS expense_requests (
   amount DECIMAL(15,2) NOT NULL,
   purpose TEXT,
   priority TEXT CHECK (priority IN ('normal', 'urgent', 'low')) DEFAULT 'normal',
-  status TEXT CHECK (status IN ('draft', 'pending_supervisor', 'pending_accounting', 'approved', 'rejected', 'returned_for_revision', 'released')) DEFAULT 'draft',
+  status TEXT CHECK (status IN ('draft', 'pending_supervisor', 'pending_accounting', 'approved', 'rejected', 'returned_for_revision', 'released', 'on_hold')) DEFAULT 'draft',
   disbursement_status TEXT CHECK (disbursement_status IN ('pending', 'scheduled', 'released', 'cancelled')) DEFAULT 'pending',
   release_method TEXT CHECK (release_method IN ('cash', 'bank_transfer', 'check', 'petty_cash', 'other')),
   release_reference_no TEXT,
@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS expense_requests (
   revision_count INT DEFAULT 0,
   rejection_reason TEXT,
   rejection_stage TEXT CHECK (rejection_stage IN ('supervisor', 'accounting')),
+  on_hold_at TIMESTAMP,
+  on_hold_by UUID REFERENCES users(id),
   submitted_at TIMESTAMP,
   updated_at TIMESTAMP DEFAULT NOW()
 );

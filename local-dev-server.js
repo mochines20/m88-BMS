@@ -42,6 +42,71 @@ const authorize = (roles) => {
 };
 
 const toNumber = (value) => Number.parseFloat(value ?? 0) || 0;
+const normalizeAttachments = (attachments = []) =>
+  (Array.isArray(attachments) ? attachments : [])
+    .map((attachment) => ({
+      file_name: String(attachment?.file_name || '').trim(),
+      file_url: String(attachment?.file_url || '').trim(),
+      attachment_type: String(attachment?.attachment_type || '').trim() || null,
+      attachment_scope: ['request', 'disbursement', 'liquidation'].includes(String(attachment?.attachment_scope || '').trim())
+        ? String(attachment?.attachment_scope || '').trim()
+        : 'request'
+    }))
+    .filter((attachment) => attachment.file_name && attachment.file_url);
+
+const loadAttachmentsByRequestIds = async (requestIds = []) => {
+  const uniqueIds = Array.from(new Set((requestIds || []).filter(Boolean)));
+  if (!uniqueIds.length) return new Map();
+
+  const { data, error } = await supabase
+    .from('request_attachments')
+    .select('*')
+    .in('request_id', uniqueIds)
+    .order('uploaded_at', { ascending: false });
+
+  if (error) throw error;
+
+  const attachmentMap = new Map();
+  (data || []).forEach((attachment) => {
+    const current = attachmentMap.get(attachment.request_id) || [];
+    current.push(attachment);
+    attachmentMap.set(attachment.request_id, current);
+  });
+
+  return attachmentMap;
+};
+
+const recordRequestAuditEvent = async ({
+  actor_id,
+  request_id = null,
+  action,
+  note = '',
+  entity_type = 'system',
+  entity_id = null,
+  old_value = null,
+  new_value = null
+}) => {
+  try {
+    const payload = {
+      actor_id,
+      request_id,
+      action,
+      note,
+      entity_type,
+      entity_id,
+      old_value: old_value === null ? null : JSON.stringify(old_value),
+      new_value: new_value === null ? null : JSON.stringify(new_value),
+      created_at: new Date()
+    };
+
+    const { error } = await supabase.from('request_audit_logs').insert(payload);
+    if (error) {
+      console.warn('[audit] failed to record request_audit_logs event:', error.message || error);
+    }
+  } catch (error) {
+    console.warn('[audit] unexpected audit insert failure:', error?.message || error);
+  }
+};
 const normalizeDepartmentName = (value) => String(value || '').trim();
 const normalizeDepartmentKey = (value) => normalizeDepartmentName(value).toLowerCase();
 const LEGACY_TO_CANONICAL_DEPARTMENT = {
@@ -401,7 +466,7 @@ const syncUserDepartmentToActiveYear = async (userId, departmentId, preferredFis
 const ensureDepartmentsForFiscalYear = async (fiscalYear, options = {}) => {
   const { data: departments, error } = await supabase
     .from('departments')
-    .select('id, name, fiscal_year, annual_budget, petty_cash_balance, used_budget, updated_at, created_at')
+    .select('id, name, fiscal_year, annual_budget, used_budget, petty_cash_balance, updated_at, created_at')
     .order('fiscal_year', { ascending: false })
     .order('updated_at', { ascending: false });
 
@@ -456,9 +521,95 @@ const ensureDepartmentsForFiscalYear = async (fiscalYear, options = {}) => {
 
 const canAccessRequest = (user, request) => {
   if (!user || !request) return false;
-  if (user.role === 'employee') return request.employee_id === user.id;
+  if (user.role === 'employee' || user.role === 'manager') return request.employee_id === user.id;
   if (user.role === 'supervisor') return request.department_id === user.department_id;
   return true;
+};
+
+// Helper: Find the budget category linked to a request (by category_id or name)
+const findRequestCategory = async (request) => {
+  if (!request) return null;
+  if (request.category_id) {
+    const { data } = await supabase
+      .from('budget_categories')
+      .select('id, category_code, category_name, budget_amount, remaining_amount, used_amount, committed_amount')
+      .eq('id', request.category_id)
+      .maybeSingle();
+    if (data) return data;
+  }
+  if (request.category && request.department_id) {
+    const cleanCode = String(request.category).replace(/[^a-zA-Z0-9]/g, '');
+    const { data } = await supabase
+      .from('budget_categories')
+      .select('id, category_code, category_name, budget_amount, remaining_amount, used_amount, committed_amount')
+      .eq('department_id', request.department_id)
+      .ilike('category_code', cleanCode)
+      .maybeSingle();
+    if (data) return data;
+  }
+  return null;
+};
+
+// Helper: Adjust category committed_amount by delta (positive = commit, negative = release commitment)
+const adjustCategoryCommitted = async (request, delta) => {
+  try {
+    const category = await findRequestCategory(request);
+    if (!category) return { ok: false, reason: 'category_not_found' };
+    const newCommitted = Math.max(0, toNumber(category.committed_amount) + toNumber(delta));
+    const { error } = await supabase
+      .from('budget_categories')
+      .update({ committed_amount: newCommitted, updated_at: new Date() })
+      .eq('id', category.id);
+    if (error) return { ok: false, reason: error.message };
+    return { ok: true, category, newCommitted };
+  } catch (err) {
+    return { ok: false, reason: err.message };
+  }
+};
+
+// Helper: On release - subtract from committed_amount and add to used_amount
+const adjustCategoryReleased = async (request) => {
+  try {
+    const category = await findRequestCategory(request);
+    if (!category) return { ok: false, reason: 'category_not_found' };
+    const amount = toNumber(request.amount);
+    const newCommitted = Math.max(0, toNumber(category.committed_amount) - amount);
+    const newUsed = toNumber(category.used_amount) + amount;
+    const { error } = await supabase
+      .from('budget_categories')
+      .update({ committed_amount: newCommitted, used_amount: newUsed, updated_at: new Date() })
+      .eq('id', category.id);
+    if (error) return { ok: false, reason: error.message };
+    return { ok: true, category, newCommitted, newUsed };
+  } catch (err) {
+    return { ok: false, reason: err.message };
+  }
+};
+
+// Helper: Check if category has enough budget for a new request (budget - used - committed >= amount)
+const checkCategoryBudgetAvailable = async (request, extraAmount = 0) => {
+  try {
+    const category = await findRequestCategory(request);
+    if (!category) return { ok: true, warn: 'Category not linked - cannot validate budget' };
+    const budget = toNumber(category.budget_amount);
+    const used = toNumber(category.used_amount);
+    const committed = toNumber(category.committed_amount);
+    const available = budget - used - committed;
+    const required = toNumber(request.amount) + toNumber(extraAmount);
+    return {
+      ok: available >= required,
+      category_name: category.category_name,
+      category_code: category.category_code,
+      budget,
+      used,
+      committed,
+      available,
+      required,
+      shortfall: Math.max(0, required - available)
+    };
+  } catch (err) {
+    return { ok: true, warn: err.message };
+  }
 };
 
 const getRequestForUser = async (requestId, user) => {
@@ -945,8 +1096,8 @@ app.get('/api/auth/signup-departments', async (_req, res) => {
 
 app.patch('/api/auth/profile', authenticate, async (req, res) => {
   try {
-    if (req.user.role !== 'employee' && req.user.role !== 'supervisor') {
-      return res.status(403).json({ error: 'Only employees and supervisors can update their own department.' });
+    if (req.user.role !== 'employee' && req.user.role !== 'manager' && req.user.role !== 'supervisor') {
+      return res.status(403).json({ error: 'Only employees, managers, and supervisors can update their own department.' });
     }
 
     const { name, department_id } = req.body;
@@ -1243,6 +1394,20 @@ app.patch('/api/notifications/:id/read', authenticate, async (req, res) => {
   }
 });
 
+app.patch('/api/notifications/mark-all-read', authenticate, async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('user_id', req.user.id)
+      .eq('is_read', false);
+    if (error) return res.status(400).json({ error });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/auth/users', authenticate, async (req, res) => {
   try {
     if (req.user.role !== 'super_admin') {
@@ -1282,20 +1447,26 @@ app.patch('/api/auth/users/:id', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Name and role are required.' });
     }
 
-    if (!['employee', 'supervisor', 'accounting', 'admin', 'super_admin'].includes(normalizedRole)) {
+    if (!['employee', 'manager', 'supervisor', 'accounting', 'management', 'admin', 'super_admin'].includes(normalizedRole)) {
       return res.status(400).json({ error: 'Invalid role.' });
     }
 
     const payload = {
       name: normalizedName,
       role: normalizedRole,
-      department_id: normalizedRole === 'super_admin' ? null : (normalizedDepartmentId || null),
+      department_id: (normalizedRole === 'super_admin' || normalizedRole === 'management') ? null : (normalizedDepartmentId || null),
       updated_at: new Date().toISOString()
     };
 
-    if (normalizedRole !== 'super_admin' && !payload.department_id) {
+    if (normalizedRole !== 'super_admin' && normalizedRole !== 'management' && !payload.department_id) {
       return res.status(400).json({ error: 'Department is required for this role.' });
     }
+
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select('id, name, role, department_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
 
     const { data, error } = await supabase
       .from('users')
@@ -1305,6 +1476,22 @@ app.patch('/api/auth/users/:id', authenticate, async (req, res) => {
       .single();
 
     if (error) return res.status(400).json({ error: error.message || error });
+
+    await recordRequestAuditEvent({
+      actor_id: req.user.id,
+      action: 'user_updated',
+      note: `Updated user ${data.email || data.id}`,
+      entity_type: 'user',
+      entity_id: data.id,
+      old_value: existingUser,
+      new_value: {
+        id: data.id,
+        name: data.name,
+        role: data.role,
+        department_id: data.department_id
+      }
+    });
+
     res.json(data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1378,9 +1565,10 @@ app.get('/api/system/health', authenticate, async (req, res) => {
 // Requests routes
 app.get('/api/requests', authenticate, async (req, res) => {
   try {
+    const { status, date_from, date_to } = req.query || {};
     const activeFiscalYear = await getLatestConfiguredFiscalYear();
     let query = supabase.from('expense_requests').select(REQUEST_RELATIONS_SELECT);
-    if (req.user.role === 'employee') {
+    if (req.user.role === 'employee' || req.user.role === 'manager') {
       query = query.eq('employee_id', req.user.id);
     } else if (req.user.role === 'supervisor') {
       const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(req.user, activeFiscalYear);
@@ -1389,10 +1577,29 @@ app.get('/api/requests', authenticate, async (req, res) => {
         : query.eq('department_id', req.user.department_id);
     }
 
-    const { data, error } = await query;
+    if (status && String(status).trim() !== 'all') {
+      query = query.eq('status', String(status).trim());
+    }
+
+    const dateField = String(status || '').trim() === 'released' ? 'released_at' : 'submitted_at';
+    if (date_from) {
+      query = query.gte(dateField, String(date_from));
+    }
+    if (date_to) {
+      query = query.lte(dateField, String(date_to));
+    }
+
+    const { data, error } = await query.order('submitted_at', { ascending: false });
     if (error) return res.status(400).json({ error });
+
+    const attachmentsByRequestId = await loadAttachmentsByRequestIds((data || []).map((request) => request.id));
+    const dataWithAttachments = (data || []).map((request) => ({
+      ...request,
+      attachments: attachmentsByRequestId.get(request.id) || []
+    }));
+
     const { summaryByDepartmentId, allocationsByRequestId } = await buildDepartmentBudgetSummaryMapV2();
-    res.json(enrichRequestsV2(data || [], summaryByDepartmentId, allocationsByRequestId));
+    res.json(enrichRequestsV2(dataWithAttachments, summaryByDepartmentId, allocationsByRequestId));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1409,17 +1616,24 @@ app.get('/api/requests/my', authenticate, async (req, res) => {
 
     if (error) return res.status(400).json({ error });
     
+    const attachmentsByRequestId = await loadAttachmentsByRequestIds((data || []).map((request) => request.id));
+    const dataWithAttachments = (data || []).map((request) => ({
+      ...request,
+      attachments: attachmentsByRequestId.get(request.id) || []
+    }));
+
     const { summaryByDepartmentId, allocationsByRequestId } = await buildDepartmentBudgetSummaryMapV2();
-    res.json(enrichRequestsV2(data || [], summaryByDepartmentId, allocationsByRequestId));
+    res.json(enrichRequestsV2(dataWithAttachments, summaryByDepartmentId, allocationsByRequestId));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-app.post('/api/requests', authenticate, authorize(['employee', 'supervisor', 'accounting']), async (req, res) => {
+app.post('/api/requests', authenticate, authorize(['employee', 'manager', 'supervisor', 'accounting']), async (req, res) => {
   try {
-    const { item_name, category, category_id, amount, purpose, priority } = req.body;
+    const { item_name, category, category_id, amount, purpose, priority, attachments = [], metadata = {} } = req.body;
     const normalizedAmount = toNumber(amount);
+    const normalizedAttachments = normalizeAttachments(attachments);
     const activeFiscalYear = await getLatestConfiguredFiscalYear();
     const activeDepartment = await syncUserDepartmentToActiveYear(req.user.id, req.user.department_id, activeFiscalYear);
     const userRole = req.user.role;
@@ -1437,8 +1651,8 @@ app.post('/api/requests', authenticate, authorize(['employee', 'supervisor', 'ac
     }
 
     // Determine initial status based on user role
-    // Employee -> pending_supervisor, Supervisor/Accounting -> pending_accounting (skip supervisor)
-    const initialStatus = userRole === 'employee' ? 'pending_supervisor' : 'pending_accounting';
+    // Employee/Manager -> pending_supervisor, Supervisor/Accounting -> pending_accounting (skip supervisor)
+    const initialStatus = (userRole === 'employee' || userRole === 'manager') ? 'pending_supervisor' : 'pending_accounting';
     const request_code = `REQ-${Date.now()}`;
 
     const insertData = {
@@ -1452,7 +1666,8 @@ app.post('/api/requests', authenticate, authorize(['employee', 'supervisor', 'ac
       purpose,
       priority,
       status: initialStatus,
-      submitted_at: new Date()
+      submitted_at: new Date(),
+      metadata
     };
 
     // Store category_id if provided
@@ -1468,17 +1683,35 @@ app.post('/api/requests', authenticate, authorize(['employee', 'supervisor', 'ac
 
     if (error) return res.status(400).json({ error });
 
+    if (normalizedAttachments.length) {
+      const { error: attachmentError } = await supabase
+        .from('request_attachments')
+        .insert(
+          normalizedAttachments.map((attachment) => ({
+            request_id: data.id,
+            attachment_scope: attachment.attachment_scope,
+            attachment_type: attachment.attachment_type,
+            file_name: attachment.file_name,
+            file_url: attachment.file_url,
+            uploaded_by: req.user.id,
+            uploaded_at: new Date()
+          }))
+        );
+
+      if (attachmentError) return res.status(400).json({ error: attachmentError.message || attachmentError });
+    }
+
     // Log the submission
     await supabase.from('approval_logs').insert({
       request_id: data.id,
       actor_id: req.user.id,
       action: 'submitted',
-      stage: userRole === 'employee' ? 'supervisor' : 'accounting',
-      note: userRole === 'employee' ? 'Request submitted' : `Request submitted by ${userRole} (routed directly to accounting)`
+      stage: (userRole === 'employee' || userRole === 'manager') ? 'supervisor' : 'accounting',
+      note: (userRole === 'employee' || userRole === 'manager') ? 'Request submitted' : `Request submitted by ${userRole} (routed directly to accounting)`
     });
 
     // Notify based on role
-    if (userRole === 'employee') {
+    if (userRole === 'employee' || userRole === 'manager') {
       // Notify supervisors of the department
       const { data: supervisors } = await supabase
         .from('users')
@@ -1505,7 +1738,8 @@ app.post('/api/requests', authenticate, authorize(['employee', 'supervisor', 'ac
       }
     }
 
-    res.json(data);
+    const attachmentsByRequestId = await loadAttachmentsByRequestIds([data.id]);
+    res.json({ ...data, attachments: attachmentsByRequestId.get(data.id) || [], metadata });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1513,21 +1747,24 @@ app.post('/api/requests', authenticate, authorize(['employee', 'supervisor', 'ac
 
 app.get('/api/requests/audit-logs', authenticate, async (req, res) => {
   try {
-    if (req.user.role !== 'super_admin') {
+    if (!['accounting', 'admin', 'super_admin'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    const [approvalLogsResult, allocationLogsResult] = await Promise.all([
+    const [approvalLogsResult, allocationLogsResult, auditLogsResult] = await Promise.all([
       supabase.from('approval_logs').select('*').order('timestamp', { ascending: false }).limit(150),
-      supabase.from('allocation_logs').select('*').order('created_at', { ascending: false }).limit(150)
+      supabase.from('allocation_logs').select('*').order('created_at', { ascending: false }).limit(150),
+      supabase.from('request_audit_logs').select('*').order('created_at', { ascending: false }).limit(150)
     ]);
 
     if (approvalLogsResult.error) return res.status(400).json({ error: approvalLogsResult.error });
     if (allocationLogsResult.error) return res.status(400).json({ error: allocationLogsResult.error });
+    if (auditLogsResult.error) return res.status(400).json({ error: auditLogsResult.error });
 
     const approvalLogs = (approvalLogsResult.data || []).map((log) => ({ ...log, log_type: 'approval', event_time: log.timestamp }));
     const allocationLogs = (allocationLogsResult.data || []).map((log) => ({ ...log, log_type: 'allocation', event_time: log.created_at }));
-    const combinedLogs = [...approvalLogs, ...allocationLogs]
+    const requestAuditLogs = (auditLogsResult.data || []).map((log) => ({ ...log, log_type: 'audit', event_time: log.created_at }));
+    const combinedLogs = [...approvalLogs, ...allocationLogs, ...requestAuditLogs]
       .sort((left, right) => new Date(right.event_time).getTime() - new Date(left.event_time).getTime())
       .slice(0, 200);
 
@@ -1557,6 +1794,11 @@ app.get('/api/requests/audit-logs', authenticate, async (req, res) => {
   }
 });
 
+app.get('/api/audit-logs', authenticate, async (req, res) => {
+  req.url = '/api/requests/audit-logs';
+  app._router.handle(req, res, () => {});
+});
+
 app.get('/api/requests/:id', authenticate, async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -1565,14 +1807,20 @@ app.get('/api/requests/:id', authenticate, async (req, res) => {
       .eq('id', req.params.id)
       .single();
     if (error) return res.status(400).json({ error });
-    if (req.user.role === 'employee' && data.employee_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+    if ((req.user.role === 'employee' || req.user.role === 'manager') && data.employee_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
     if (req.user.role === 'supervisor') {
       const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(req.user, await getLatestConfiguredFiscalYear());
       if (!accessibleDepartmentIds.includes(data.department_id)) return res.status(403).json({ error: 'Forbidden' });
     }
 
+    const attachmentsByRequestId = await loadAttachmentsByRequestIds([data.id]);
+    const requestWithAttachments = {
+      ...data,
+      attachments: attachmentsByRequestId.get(data.id) || []
+    };
+
     const { summaryByDepartmentId, allocationsByRequestId } = await buildDepartmentBudgetSummaryMapV2();
-    res.json(enrichRequestsV2([data], summaryByDepartmentId, allocationsByRequestId)[0]);
+    res.json(enrichRequestsV2([requestWithAttachments], summaryByDepartmentId, allocationsByRequestId)[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1699,7 +1947,7 @@ app.get('/api/departments/:id/budget-breakdown', authenticate, async (req, res) 
         .order('transaction_date', { ascending: false }),
       supabase
         .from('budget_categories')
-        .select('id, category_code, category_name, budget_amount, remaining_amount, created_at')
+        .select('id, category_code, category_name, budget_amount, remaining_amount, created_at, fiscal_year')
         .in('department_id', relatedDepartmentIds)
         .order('category_code', { ascending: true })
     ]);
@@ -1709,7 +1957,22 @@ app.get('/api/departments/:id/budget-breakdown', authenticate, async (req, res) 
     if (pettyCashResult.error) return res.status(400).json({ error: pettyCashResult.error });
     if (categoriesResult.error) console.log('Categories fetch error:', categoriesResult.error);
 
-    const budgetCategories = categoriesResult.data || [];
+    // Debug logging
+    console.log('=== DEBUG Budget Breakdown ===');
+    console.log('Department ID:', departmentId);
+    console.log('Related Departments:', relatedDepartments.map(d => ({ id: d.id, name: d.name, budget: d.annual_budget })));
+    console.log('Related Department IDs:', relatedDepartmentIds);
+    console.log('Selected Department Fiscal Year:', selectedDepartment.fiscal_year);
+    console.log('Raw categories found:', categoriesResult.data?.length || 0);
+    console.log('All raw categories:', categoriesResult.data?.map(c => ({ id: c.id, name: c.category_name, dept: c.department_id, fy: c.fiscal_year })));
+
+    // Filter categories by fiscal year (match selected year OR null for legacy data)
+    const allCategories = categoriesResult.data || [];
+    const budgetCategories = allCategories.filter(cat => 
+      cat.fiscal_year === selectedDepartment.fiscal_year || cat.fiscal_year === null
+    );
+    
+    console.log('Filtered categories:', budgetCategories.length);
     const allRequests = requestsResult.data || [];
     const allocationsByRequestId = await fetchRequestAllocationsByRequestIdV2(allRequests.map((request) => request.id));
     const requests = allRequests.filter((request) => {
@@ -2054,12 +2317,41 @@ app.patch('/api/requests/:id/approve', authenticate, authorize(['supervisor', 'a
         return res.status(400).json({ error: 'Only requests waiting for supervisor approval can be approved here' });
       }
 
+      // Fix #2: Early budget validation - check if category has enough budget BEFORE sending to accounting
+      // Supervisor can override with force=true flag if needed (for emergency cases)
+      if (!req.body?.force_approve) {
+        const budgetCheck = await checkCategoryBudgetAvailable(request);
+        if (budgetCheck && budgetCheck.ok === false && budgetCheck.shortfall > 0) {
+          return res.status(400).json({
+            error: `Insufficient budget in category "${budgetCheck.category_name}" (${budgetCheck.category_code}). Available: ₱${budgetCheck.available.toLocaleString()}, Required: ₱${budgetCheck.required.toLocaleString()}, Shortfall: ₱${budgetCheck.shortfall.toLocaleString()}. Set force_approve=true to override.`,
+            budget_check: budgetCheck
+          });
+        }
+      }
+
       newStatus = 'pending_accounting';
       stage = 'accounting';
+
+      // Fix #1: Add to category committed_amount when moving to accounting stage
+      const commitResult = await adjustCategoryCommitted(request, toNumber(request.amount));
+      if (!commitResult.ok) {
+        console.warn(`[commit] Failed to update category committed_amount for request ${request.id}: ${commitResult.reason}`);
+      }
       } else if (req.user.role === 'accounting') {
         if (request.status !== 'pending_accounting') {
           return res.status(400).json({ error: 'Only requests waiting for accounting approval can be released here' });
         }
+
+        // Fix #5: Dual authorization for large amounts
+        const DUAL_AUTH = Number(process.env.DUAL_AUTH_THRESHOLD || 500000);
+        if (toNumber(request.amount) >= DUAL_AUTH && !request.co_approved_by) {
+          return res.status(400).json({
+            error: `Amount ₱${toNumber(request.amount).toLocaleString()} requires co-approval (threshold ≥ ₱${DUAL_AUTH.toLocaleString()}). Ask a second accountant to co-approve via POST /api/requests/${request.id}/co-approve before release.`,
+            requires_co_approval: true,
+            threshold: DUAL_AUTH
+          });
+        }
+
         const allocationsByRequestId = await fetchRequestAllocationsByRequestIdV2([request.id]);
         const normalizedAllocations = normalizeAllocationsV2(request, allocationsByRequestId.get(request.id) || []);
         if (!allocationTotalsMatchRequestV2(request.amount, normalizedAllocations)) {
@@ -2096,6 +2388,12 @@ app.patch('/api/requests/:id/approve', authenticate, authorize(['supervisor', 'a
           action: 'released',
           note: `Released with ${normalizedAllocations.length} department allocation(s).`
         });
+
+        // Fix #1: Move category committed_amount → used_amount on release
+        const releaseResult = await adjustCategoryReleased(request);
+        if (!releaseResult.ok) {
+          console.warn(`[release] Failed to update category used/committed for request ${request.id}: ${releaseResult.reason}`);
+        }
       }
 
     const { data, error } = await supabase
@@ -2160,8 +2458,21 @@ app.patch('/api/requests/:id/release', authenticate, authorize(['accounting', 'a
     }
 
     const { release_method, release_reference_no } = req.body || {};
+    const DUAL_AUTH = Number(process.env.DUAL_AUTH_THRESHOLD || 500000);
+    if (toNumber(request.amount) >= DUAL_AUTH && !request.co_approved_by) {
+      return res.status(400).json({
+        error: `Amount ₱${toNumber(request.amount).toLocaleString()} requires co-approval (threshold ≥ ₱${DUAL_AUTH.toLocaleString()}).`,
+        requires_co_approval: true,
+        threshold: DUAL_AUTH
+      });
+    }
+
     const allocationsByRequestId = await fetchRequestAllocationsByRequestIdV2([request.id]);
     const normalizedAllocations = normalizeAllocationsV2(request, allocationsByRequestId.get(request.id) || []);
+
+    if (!allocationTotalsMatchRequestV2(request.amount, normalizedAllocations)) {
+      return res.status(400).json({ error: 'Finalize the department allocations before release. The allocated total must match the request amount.' });
+    }
 
     // Update department budgets
     for (const allocation of normalizedAllocations) {
@@ -2213,6 +2524,11 @@ app.patch('/api/requests/:id/release', authenticate, authorize(['accounting', 'a
       if (!catUpdateError) {
         console.log(`Deducted ${request.amount} from category ${categoryData.category_code}. New remaining: ${newRemaining}`);
       }
+    }
+
+    const releaseResult = await adjustCategoryReleased(request);
+    if (!releaseResult.ok) {
+      console.warn(`[release] Failed to update category used/committed for request ${request.id}: ${releaseResult.reason}`);
     }
 
     // Update request to released
@@ -2373,6 +2689,14 @@ app.patch('/api/requests/:id/reject', authenticate, authorize(['supervisor', 'ac
 
     if (error) return res.status(400).json({ error });
 
+    // Fix #1: If accounting rejects, un-commit the amount (revert supervisor's commitment)
+    if (req.user.role === 'accounting') {
+      const uncommitResult = await adjustCategoryCommitted(request, -toNumber(request.amount));
+      if (!uncommitResult.ok) {
+        console.warn(`[reject] Failed to revert committed_amount for request ${request.id}: ${uncommitResult.reason}`);
+      }
+    }
+
     await supabase.from('approval_logs').insert({
       request_id: request.id,
       actor_id: req.user.id,
@@ -2423,6 +2747,14 @@ app.patch('/api/requests/:id/return', authenticate, authorize(['supervisor', 'ac
 
     if (error) return res.status(400).json({ error: error.message || error });
 
+    // Fix #1: If accounting returns a request that was pending_accounting, un-commit the amount
+    if (req.user.role === 'accounting' && request.status === 'pending_accounting') {
+      const uncommitResult = await adjustCategoryCommitted(request, -toNumber(request.amount));
+      if (!uncommitResult.ok) {
+        console.warn(`[return] Failed to revert committed_amount for request ${request.id}: ${uncommitResult.reason}`);
+      }
+    }
+
     await supabase.from('approval_logs').insert({
       request_id: request.id,
       actor_id: req.user.id,
@@ -2440,7 +2772,7 @@ app.patch('/api/requests/:id/return', authenticate, authorize(['supervisor', 'ac
   }
 });
 
-app.patch('/api/requests/:id/resubmit', authenticate, authorize(['employee']), async (req, res) => {
+app.patch('/api/requests/:id/resubmit', authenticate, authorize(['employee', 'manager']), async (req, res) => {
   try {
     const { item_name, amount, category, priority, purpose: bodyPurpose } = req.body || {};
     const purpose = String(bodyPurpose || '').trim();
@@ -2570,6 +2902,8 @@ app.get('/api/requests/:id/timeline', authenticate, async (req, res) => {
 // Reports routes
 app.get('/api/reports/filter-options', authenticate, async (req, res) => {
   try {
+    const activeFiscalYear = await getLatestConfiguredFiscalYear();
+    
     let requestQuery = supabase
       .from('expense_requests')
       .select('category, department_id, fiscal_year')
@@ -2580,12 +2914,20 @@ app.get('/api/reports/filter-options', authenticate, async (req, res) => {
       .select('id, name, fiscal_year')
       .order('name', { ascending: true });
 
-    if (req.user.role === 'employee' || req.user.role === 'supervisor') {
-      const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(req.user, await getLatestConfiguredFiscalYear());
-      if (req.user.role === 'employee') {
+    // Fetch budget categories for the user's accessible departments
+    let budgetCategoryQuery = supabase
+      .from('budget_categories')
+      .select('category_name, category_code, department_id')
+      .eq('fiscal_year', activeFiscalYear)
+      .order('category_name', { ascending: true });
+
+    if (req.user.role === 'employee' || req.user.role === 'manager' || req.user.role === 'supervisor') {
+      const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(req.user, activeFiscalYear);
+      if (req.user.role === 'employee' || req.user.role === 'manager') {
         const activeDepartmentId = accessibleDepartmentIds[0] || req.user.department_id;
         requestQuery = requestQuery.eq('department_id', activeDepartmentId);
         departmentQuery = departmentQuery.eq('id', activeDepartmentId);
+        budgetCategoryQuery = budgetCategoryQuery.eq('department_id', activeDepartmentId);
       } else {
         requestQuery = accessibleDepartmentIds.length
           ? requestQuery.in('department_id', accessibleDepartmentIds)
@@ -2593,16 +2935,21 @@ app.get('/api/reports/filter-options', authenticate, async (req, res) => {
         departmentQuery = accessibleDepartmentIds.length
           ? departmentQuery.in('id', accessibleDepartmentIds)
           : departmentQuery.eq('id', req.user.department_id);
+        budgetCategoryQuery = accessibleDepartmentIds.length
+          ? budgetCategoryQuery.in('department_id', accessibleDepartmentIds)
+          : budgetCategoryQuery.eq('department_id', req.user.department_id);
       }
     }
 
-    const [{ data: requestRows, error: requestError }, { data: departments, error: departmentError }] = await Promise.all([
+    const [{ data: requestRows, error: requestError }, { data: departments, error: departmentError }, { data: budgetCategories, error: budgetError }] = await Promise.all([
       requestQuery,
-      departmentQuery
+      departmentQuery,
+      budgetCategoryQuery
     ]);
 
     if (requestError) return res.status(400).json({ error: requestError });
     if (departmentError) return res.status(400).json({ error: departmentError });
+    if (budgetError) console.error('Budget categories fetch error:', budgetError);
 
     const uniqueDepartments = new Map();
     (departments || []).forEach((department) => {
@@ -2618,12 +2965,17 @@ app.get('/api/reports/filter-options', authenticate, async (req, res) => {
       }
     });
 
+    // Combine categories from requests AND budget categories
+    const requestCategories = (requestRows || [])
+      .map((row) => String(row.category || '').trim())
+      .filter(Boolean);
+    
+    const budgetCategoryNames = (budgetCategories || [])
+      .map((cat) => String(cat.category_name || '').trim())
+      .filter(Boolean);
+
     const categories = Array.from(
-      new Set(
-        (requestRows || [])
-          .map((row) => String(row.category || '').trim())
-          .filter(Boolean)
-      )
+      new Set([...requestCategories, ...budgetCategoryNames])
     ).sort((left, right) => left.localeCompare(right));
 
     res.json({
@@ -2648,7 +3000,7 @@ app.get('/api/reports/summary', authenticate, async (req, res) => {
     const { dept, from, to, status, category, fiscal_year, archived = 'false' } = req.query;
     let query = supabase.from('expense_requests').select(REQUESTS_REPORT_SELECT);
 
-    if (req.user.role === 'employee') {
+    if (req.user.role === 'employee' || req.user.role === 'manager') {
       query = query.eq('employee_id', req.user.id);
     } else if (req.user.role === 'supervisor') {
       const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(req.user, await getLatestConfiguredFiscalYear());
@@ -2687,7 +3039,7 @@ app.get('/api/reports/requests', authenticate, async (req, res) => {
     const { dept, from, to, status, category, fiscal_year, archived = 'false' } = req.query;
     let query = supabase.from('expense_requests').select(REQUESTS_REPORT_SELECT);
 
-    if (req.user.role === 'employee') {
+    if (req.user.role === 'employee' || req.user.role === 'manager') {
       query = query.eq('employee_id', req.user.id);
     } else if (req.user.role === 'supervisor') {
       const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(req.user, await getLatestConfiguredFiscalYear());
@@ -2722,19 +3074,38 @@ app.get('/api/budget/categories', authenticate, async (req, res) => {
     const activeFiscalYear = await getLatestConfiguredFiscalYear();
     const targetFiscalYear = fiscal_year ? parseInt(fiscal_year) : activeFiscalYear;
 
+    // Security: Employees can only see their own department's categories
+    // Always fetch current department from DB (JWT token might be stale)
+    let targetDepartmentId = department_id;
+    if (req.user.role === 'employee' || req.user.role === 'manager') {
+      // Fetch current department from database to ensure it's up to date
+      const { data: userData } = await supabase
+        .from('users')
+        .select('department_id')
+        .eq('id', req.user.id)
+        .single();
+      
+      // Force employee to only see their own department
+      targetDepartmentId = userData?.department_id || req.user.department_id;
+    }
+
     let query = supabase
       .from('budget_categories')
-      .select('*')
-      .eq('fiscal_year', targetFiscalYear);
+      .select('*');
 
-    if (department_id) {
-      query = query.eq('department_id', department_id);
+    if (targetDepartmentId) {
+      query = query.eq('department_id', targetDepartmentId);
     }
 
     const { data, error } = await query.order('category_name');
     if (error) throw error;
 
-    res.json(data || []);
+    // Filter by fiscal year in code to handle both matching year and NULL values
+    const filteredData = (data || []).filter(cat => 
+      cat.fiscal_year === targetFiscalYear || cat.fiscal_year === null
+    );
+
+    res.json(filteredData);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -2747,32 +3118,31 @@ app.post('/api/budget/categories', authenticate, authorize(['accounting', 'admin
     const activeFiscalYear = await getLatestConfiguredFiscalYear();
     const requestedBudget = toNumber(budget_amount);
 
-    const [{ data: department, error: departmentError }, { data: existingCategories, error: categoriesError }] = await Promise.all([
-      supabase
-        .from('departments')
-        .select('id, annual_budget')
-        .eq('id', department_id)
-        .single(),
-      supabase
-        .from('budget_categories')
-        .select('budget_amount')
-        .eq('department_id', department_id)
-        .eq('fiscal_year', fiscal_year || activeFiscalYear)
-    ]);
+    // Check if category already exists for this department and fiscal year
+    const { data: existingCategory, error: checkError } = await supabase
+      .from('budget_categories')
+      .select('id')
+      .eq('department_id', department_id)
+      .eq('fiscal_year', fiscal_year || activeFiscalYear)
+      .ilike('category_code', category_code)
+      .single();
+
+    if (checkError && checkError.code !== 'PGRST116') throw checkError; // PGRST116 = not found
+
+    if (existingCategory) {
+      return res.status(409).json({ 
+        error: `Category '${category_code.toUpperCase()}' already exists for this department and fiscal year.` 
+      });
+    }
+
+    const { data: department, error: departmentError } = await supabase
+      .from('departments')
+      .select('id, annual_budget')
+      .eq('id', department_id)
+      .single();
 
     if (departmentError || !department) {
       return res.status(404).json({ error: 'Department not found' });
-    }
-
-    if (categoriesError) throw categoriesError;
-
-    const annualBudget = toNumber(department.annual_budget);
-    const allocatedBudget = (existingCategories || []).reduce((sum, category) => sum + toNumber(category.budget_amount), 0);
-
-    if (allocatedBudget + requestedBudget > annualBudget) {
-      return res.status(400).json({
-        error: `Category allocation exceeds department budget. Available to allocate: ${Math.max(0, annualBudget - allocatedBudget).toFixed(2)}`
-      });
     }
 
     const { data, error } = await supabase
@@ -2792,7 +3162,32 @@ app.post('/api/budget/categories', authenticate, authorize(['accounting', 'admin
 
     if (error) throw error;
 
-    res.json(data);
+    // ADD category budget to department total
+    const currentAnnualBudget = toNumber(department.annual_budget);
+    const newAnnualBudget = currentAnnualBudget + requestedBudget;
+
+    await supabase
+      .from('departments')
+      .update({ annual_budget: newAnnualBudget, updated_at: new Date() })
+      .eq('id', department_id);
+
+    await recordRequestAuditEvent({
+      actor_id: req.user.id,
+      action: 'budget_category_created',
+      note: `Created budget category ${category_code.toUpperCase()} (${category_name}) with budget ${requestedBudget}`,
+      entity_type: 'budget_category',
+      entity_id: data.id,
+      new_value: {
+        id: data.id,
+        department_id,
+        category_code: category_code.toUpperCase(),
+        category_name,
+        budget_amount: requestedBudget,
+        department_annual_budget_after: newAnnualBudget
+      }
+    });
+
+    res.json({ ...data, updated_department_budget: newAnnualBudget });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -2817,34 +3212,17 @@ app.put('/api/budget/categories/:id', authenticate, authorize(['accounting', 'ad
     const requestedBudget = toNumber(budget_amount || current.budget_amount);
     const usedAmount = current.used_amount || 0;
     const committedAmount = current.committed_amount || 0;
-    const [{ data: department, error: departmentError }, { data: siblingCategories, error: siblingCategoriesError }] = await Promise.all([
-      supabase
-        .from('departments')
-        .select('id, annual_budget')
-        .eq('id', current.department_id)
-        .single(),
-      supabase
-        .from('budget_categories')
-        .select('id, budget_amount')
-        .eq('department_id', current.department_id)
-        .eq('fiscal_year', current.fiscal_year)
-    ]);
+    const oldBudget = toNumber(current.budget_amount);
+    const budgetDifference = requestedBudget - oldBudget;
+
+    const { data: department, error: departmentError } = await supabase
+      .from('departments')
+      .select('id, annual_budget')
+      .eq('id', current.department_id)
+      .single();
 
     if (departmentError || !department) {
       return res.status(404).json({ error: 'Department not found' });
-    }
-
-    if (siblingCategoriesError) throw siblingCategoriesError;
-
-    const otherAllocatedBudget = (siblingCategories || [])
-      .filter((category) => category.id !== id)
-      .reduce((sum, category) => sum + toNumber(category.budget_amount), 0);
-    const annualBudget = toNumber(department.annual_budget);
-
-    if (otherAllocatedBudget + requestedBudget > annualBudget) {
-      return res.status(400).json({
-        error: `Category allocation exceeds department budget. Available to allocate: ${Math.max(0, annualBudget - otherAllocatedBudget).toFixed(2)}`
-      });
     }
 
     const newRemaining = requestedBudget - usedAmount - committedAmount;
@@ -2862,6 +3240,38 @@ app.put('/api/budget/categories/:id', authenticate, authorize(['accounting', 'ad
       .single();
 
     if (error) throw error;
+
+    // Adjust department budget by the difference (can be positive or negative)
+    let departmentAnnualBudgetAfter = toNumber(department.annual_budget);
+    if (budgetDifference !== 0) {
+      const currentAnnualBudget = toNumber(department.annual_budget);
+      const newAnnualBudget = Math.max(0, currentAnnualBudget + budgetDifference);
+      departmentAnnualBudgetAfter = newAnnualBudget;
+
+      await supabase
+        .from('departments')
+        .update({ annual_budget: newAnnualBudget, updated_at: new Date() })
+        .eq('id', current.department_id);
+    }
+
+    await recordRequestAuditEvent({
+      actor_id: req.user.id,
+      action: 'budget_category_updated',
+      note: `Updated budget category ${current.category_code}`,
+      entity_type: 'budget_category',
+      entity_id: id,
+      old_value: {
+        category_name: current.category_name,
+        budget_amount: oldBudget,
+        remaining_amount: current.remaining_amount
+      },
+      new_value: {
+        category_name: data.category_name,
+        budget_amount: requestedBudget,
+        remaining_amount: data.remaining_amount,
+        department_annual_budget_after: departmentAnnualBudgetAfter
+      }
+    });
 
     res.json(data);
   } catch (error) {
@@ -2884,12 +3294,51 @@ app.delete('/api/budget/categories/:id', authenticate, authorize(['accounting', 
       return res.status(404).json({ error: 'Category not found' });
     }
 
+    // Subtract category budget from department BEFORE deleting
+    const deletedBudget = toNumber(current.budget_amount);
+    let departmentAnnualBudgetAfter = null;
+    if (deletedBudget > 0) {
+      const { data: department } = await supabase
+        .from('departments')
+        .select('annual_budget')
+        .eq('id', current.department_id)
+        .single();
+
+      if (department) {
+        const currentAnnualBudget = toNumber(department.annual_budget);
+        const newAnnualBudget = Math.max(0, currentAnnualBudget - deletedBudget);
+        departmentAnnualBudgetAfter = newAnnualBudget;
+
+        await supabase
+          .from('departments')
+          .update({ annual_budget: newAnnualBudget, updated_at: new Date() })
+          .eq('id', current.department_id);
+      }
+    }
+
     const { error } = await supabase
       .from('budget_categories')
       .delete()
       .eq('id', id);
 
     if (error) throw error;
+
+    await recordRequestAuditEvent({
+      actor_id: req.user.id,
+      action: 'budget_category_deleted',
+      note: `Deleted budget category ${current.category_code}`,
+      entity_type: 'budget_category',
+      entity_id: id,
+      old_value: {
+        category_name: current.category_name,
+        budget_amount: current.budget_amount,
+        remaining_amount: current.remaining_amount
+      },
+      new_value: {
+        deleted: true,
+        department_annual_budget_after: departmentAnnualBudgetAfter
+      }
+    });
 
     res.json({ message: 'Category deleted successfully', deleted: current });
   } catch (error) {
@@ -3012,7 +3461,7 @@ app.get('/api/cash-advances', authenticate, async (req, res) => {
       query = query.eq('status', status);
     }
 
-    if (req.user.role === 'employee') {
+    if (req.user.role === 'employee' || req.user.role === 'manager') {
       query = query.eq('employee_id', req.user.id);
     } else if (employee_id) {
       query = query.eq('employee_id', employee_id);
@@ -3114,7 +3563,7 @@ app.get('/api/cash-advances/:id', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'Cash advance not found' });
     }
 
-    if (req.user.role === 'employee' && cashAdvance.employee_id !== req.user.id) {
+    if ((req.user.role === 'employee' || req.user.role === 'manager') && cashAdvance.employee_id !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -3140,7 +3589,7 @@ app.get('/api/cash-advances/employee/:employee_id', authenticate, async (req, re
   try {
     const { employee_id } = req.params;
 
-    if (req.user.role === 'employee' && req.user.id !== employee_id) {
+    if ((req.user.role === 'employee' || req.user.role === 'manager') && req.user.id !== employee_id) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -3163,7 +3612,7 @@ app.get('/api/cash-advances/for-liquidation/:employee_id', authenticate, async (
   try {
     const { employee_id } = req.params;
 
-    if (req.user.role === 'employee' && req.user.id !== employee_id) {
+    if ((req.user.role === 'employee' || req.user.role === 'manager') && req.user.id !== employee_id) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -3184,7 +3633,7 @@ app.get('/api/cash-advances/for-liquidation/:employee_id', authenticate, async (
 });
 
 // POST /api/cash-advances/:id/liquidate
-app.post('/api/cash-advances/:id/liquidate', authenticate, authorize(['employee', 'accounting', 'admin', 'super_admin']), async (req, res) => {
+app.post('/api/cash-advances/:id/liquidate', authenticate, authorize(['employee', 'manager', 'accounting', 'admin', 'super_admin']), async (req, res) => {
   try {
     const { id } = req.params;
     const { items } = req.body;
@@ -3199,7 +3648,7 @@ app.post('/api/cash-advances/:id/liquidate', authenticate, authorize(['employee'
       return res.status(404).json({ error: 'Cash advance not found' });
     }
 
-    if (req.user.role === 'employee' && cashAdvance.employee_id !== req.user.id) {
+    if ((req.user.role === 'employee' || req.user.role === 'manager') && cashAdvance.employee_id !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -3228,6 +3677,230 @@ app.post('/api/cash-advances/:id/liquidate', authenticate, authorize(['employee'
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// ========== LIQUIDATION APPROVAL WORKFLOW ==========
+
+// POST /api/cash-advances/:id/submit-liquidation - Employee submits liquidation for accounting review
+app.post('/api/cash-advances/:id/submit-liquidation', authenticate, authorize(['employee', 'manager', 'accounting', 'admin']), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data: ca, error: caError } = await supabase
+      .from('cash_advances')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (caError || !ca) return res.status(404).json({ error: 'Cash advance not found' });
+
+    if ((req.user.role === 'employee' || req.user.role === 'manager') && ca.employee_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // Verify liquidation items exist
+    const { data: items } = await supabase
+      .from('liquidation_items')
+      .select('*')
+      .eq('cash_advance_id', id);
+    if (!items || items.length === 0) {
+      return res.status(400).json({ error: 'Add liquidation items before submitting for review.' });
+    }
+
+    const { data, error } = await supabase
+      .from('cash_advances')
+      .update({ status: 'pending_liquidation_review', updated_at: new Date() })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    // Notify accounting team
+    const { data: accountingStaff } = await supabase.from('users').select('id').eq('role', 'accounting');
+    if (accountingStaff) {
+      for (const staff of accountingStaff) {
+        await createNotification(staff.id, `Cash advance ${ca.advance_code} submitted for liquidation review.`);
+      }
+    }
+
+    res.json({ message: 'Liquidation submitted for review', cash_advance: data, items_count: items.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/cash-advances/:id/review-liquidation - Accounting approves/rejects liquidation
+app.post('/api/cash-advances/:id/review-liquidation', authenticate, authorize(['accounting', 'admin', 'super_admin']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action, note, rejected_item_ids } = req.body || {};
+
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ error: 'Action must be "approve" or "reject".' });
+    }
+
+    const { data: ca, error: caError } = await supabase
+      .from('cash_advances')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (caError || !ca) return res.status(404).json({ error: 'Cash advance not found' });
+
+    const { data: items } = await supabase
+      .from('liquidation_items')
+      .select('*')
+      .eq('cash_advance_id', id);
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({ error: 'No liquidation items to review.' });
+    }
+
+    if (action === 'approve') {
+      // Total approved items (excluding rejected ones)
+      const rejected = new Set(rejected_item_ids || []);
+      const approvedItems = items.filter(item => !rejected.has(item.id));
+      const totalLiquidated = approvedItems.reduce((sum, item) => sum + toNumber(item.amount), 0);
+      const newBalance = Math.max(0, toNumber(ca.amount_issued) - totalLiquidated);
+
+      // Determine new status
+      let newStatus = 'liquidated';
+      if (newBalance > 0 && totalLiquidated > 0) newStatus = 'partially_liquidated';
+      else if (totalLiquidated === 0) newStatus = 'outstanding';
+
+      const { data, error } = await supabase
+        .from('cash_advances')
+        .update({
+          status: newStatus,
+          amount_liquidated: totalLiquidated,
+          balance: newBalance,
+          liquidated_at: newStatus === 'liquidated' ? new Date() : null,
+          liquidation_approved_by: req.user.id,
+          liquidation_approved_at: new Date(),
+          updated_at: new Date()
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) return res.status(400).json({ error: error.message });
+
+      // Log audit
+      await supabase.from('approval_logs').insert({
+        request_id: ca.related_request_id || null,
+        actor_id: req.user.id,
+        action: 'liquidation_approved',
+        stage: 'accounting',
+        note: note || `Approved ${approvedItems.length}/${items.length} items. Total: ₱${totalLiquidated.toLocaleString()}. Balance: ₱${newBalance.toLocaleString()}`
+      });
+
+      // Notify employee
+      await createNotification(ca.employee_id,
+        `Your liquidation for ${ca.advance_code} was approved. Total liquidated: ₱${totalLiquidated.toLocaleString()}${newBalance > 0 ? `. Balance owed: ₱${newBalance.toLocaleString()}` : ''}`,
+        newBalance > 0 ? 'warning' : 'success'
+      );
+
+      res.json({ message: 'Liquidation approved', cash_advance: data, approved_count: approvedItems.length, rejected_count: rejected.size });
+    } else {
+      // Reject whole liquidation - back to outstanding for revision
+      const { data, error } = await supabase
+        .from('cash_advances')
+        .update({
+          status: 'outstanding',
+          liquidation_rejection_reason: note || 'Liquidation rejected',
+          updated_at: new Date()
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) return res.status(400).json({ error: error.message });
+
+      await supabase.from('approval_logs').insert({
+        request_id: ca.related_request_id || null,
+        actor_id: req.user.id,
+        action: 'liquidation_rejected',
+        stage: 'accounting',
+        note: note || 'Liquidation rejected'
+      });
+
+      await createNotification(ca.employee_id,
+        `Your liquidation for ${ca.advance_code} was rejected. Reason: ${note || 'Please revise and resubmit.'}`,
+        'error'
+      );
+
+      res.json({ message: 'Liquidation rejected', cash_advance: data });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========== DUAL AUTHORIZATION FOR LARGE AMOUNTS ==========
+// Threshold (₱) above which releases require a second approver
+const DUAL_AUTH_THRESHOLD = Number(process.env.DUAL_AUTH_THRESHOLD || 500000);
+
+// POST /api/requests/:id/co-approve - Second accountant co-approves a large release
+app.post('/api/requests/:id/co-approve', authenticate, authorize(['accounting', 'admin', 'super_admin']), async (req, res) => {
+  try {
+    const result = await getRequestForUser(req.params.id, req.user);
+    if (result.error) return res.status(result.status).json({ error: result.error.message || result.error });
+
+    const request = result.request;
+    if (request.status !== 'pending_accounting') {
+      return res.status(400).json({ error: 'Only pending accounting requests require co-approval.' });
+    }
+
+    if (toNumber(request.amount) < DUAL_AUTH_THRESHOLD) {
+      return res.status(400).json({ error: `Co-approval only required for requests ≥ ₱${DUAL_AUTH_THRESHOLD.toLocaleString()}.` });
+    }
+
+    if (request.co_approved_by === req.user.id) {
+      return res.status(400).json({ error: 'You already co-approved this request.' });
+    }
+
+    // Find the original approver from approval_logs
+    const { data: logs } = await supabase
+      .from('approval_logs')
+      .select('actor_id')
+      .eq('request_id', request.id)
+      .eq('action', 'approved')
+      .eq('stage', 'accounting')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (logs && logs.length > 0 && logs[0].actor_id === req.user.id) {
+      return res.status(400).json({ error: 'Same user cannot approve and co-approve the same request.' });
+    }
+
+    const { data, error } = await supabase
+      .from('expense_requests')
+      .update({
+        co_approved_by: req.user.id,
+        co_approved_at: new Date(),
+        updated_at: new Date()
+      })
+      .eq('id', request.id)
+      .select()
+      .single();
+
+    if (error) return res.status(400).json({ error: error.message });
+
+    await supabase.from('approval_logs').insert({
+      request_id: request.id,
+      actor_id: req.user.id,
+      action: 'co_approved',
+      stage: 'accounting',
+      note: `Co-approved for dual authorization (amount ≥ ₱${DUAL_AUTH_THRESHOLD.toLocaleString()}).`
+    });
+
+    res.json({ message: 'Co-approved', request: data, threshold: DUAL_AUTH_THRESHOLD });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/config/auth-thresholds - Expose threshold so frontend can show warnings
+app.get('/api/config/auth-thresholds', authenticate, (_req, res) => {
+  res.json({ dual_auth_threshold: DUAL_AUTH_THRESHOLD });
 });
 
 const PORT = process.env.PORT || 5000;

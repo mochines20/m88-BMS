@@ -306,7 +306,7 @@ const notifyEmployee = async (employeeId: string, subject: string, message: stri
 router.get('/', authenticate, async (req: any, res) => {
   const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
   let query = supabase.from('expense_requests').select(REQUEST_RELATIONS_SELECT);
-  if (req.user.role === 'employee') {
+  if (req.user.role === 'employee' || req.user.role === 'manager') {
     query = query.eq('employee_id', req.user.id);
   } else if (req.user.role === 'supervisor') {
     const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
@@ -348,7 +348,7 @@ router.get('/my', authenticate, async (req: any, res) => {
 });
 
 // POST /api/requests - submit new (employee, supervisor, or accounting)
-router.post('/', authenticate, authorize('employee', 'supervisor', 'accounting'), async (req: any, res) => {
+router.post('/', authenticate, authorize('employee', 'manager', 'supervisor', 'accounting'), async (req: any, res) => {
   const { item_name, category, amount, purpose, priority, attachments = [], metadata = {} } = req.body;
   const request_code = `REQ-${Date.now()}`;
   const activeDepartment = { id: req.user.department_id, fiscal_year: await getLatestConfiguredFiscalYear(supabase) };
@@ -357,7 +357,7 @@ router.post('/', authenticate, authorize('employee', 'supervisor', 'accounting')
   // Determine initial status based on user role
   // Employee -> pending_supervisor, Supervisor/Accounting -> pending_accounting (skip supervisor)
   const userRole = req.user.role;
-  const initialStatus = userRole === 'employee' ? 'pending_supervisor' : 'pending_accounting';
+  const initialStatus = (userRole === 'employee' || userRole === 'manager') ? 'pending_supervisor' : 'pending_accounting';
   
   const { data, error } = await supabase
     .from('expense_requests')
@@ -398,12 +398,12 @@ router.post('/', authenticate, authorize('employee', 'supervisor', 'accounting')
     request_id: data.id,
     actor_id: req.user.id,
     action: 'submitted',
-    stage: userRole === 'employee' ? 'supervisor' : 'accounting',
-    note: userRole === 'employee' ? 'Request submitted' : `Request submitted by ${userRole} (routed directly to accounting)`
+    stage: (userRole === 'employee' || userRole === 'manager') ? 'supervisor' : 'accounting',
+    note: (userRole === 'employee' || userRole === 'manager') ? 'Request submitted' : `Request submitted by ${userRole} (routed directly to accounting)`
   });
 
   // Notify based on role
-  if (userRole === 'employee') {
+  if (userRole === 'employee' || userRole === 'manager') {
     // Notify supervisor
     const { data: supervisor } = await supabase.from('users').select('email').eq('department_id', req.user.department_id).eq('role', 'supervisor').single();
     if (supervisor?.email) sendEmail(supervisor.email, 'New Expense Request', `New request ${request_code} submitted.`);
@@ -488,7 +488,7 @@ router.get('/:id', authenticate, async (req: any, res) => {
     .eq('id', req.params.id)
     .single();
   if (error) return res.status(400).json({ error });
-  if (req.user.role === 'employee' && data.employee_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+  if ((req.user.role === 'employee' || req.user.role === 'manager') && data.employee_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
   if (req.user.role === 'supervisor') {
     const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
     if (!accessibleDepartmentIds.includes(data.department_id)) return res.status(403).json({ error: 'Forbidden' });
@@ -844,7 +844,7 @@ router.patch('/:id/return', authenticate, authorize('supervisor', 'accounting', 
 });
 
 // PATCH /api/requests/:id/resubmit
-router.patch('/:id/resubmit', authenticate, authorize('employee'), async (req: any, res) => {
+router.patch('/:id/resubmit', authenticate, authorize('employee', 'manager'), async (req: any, res) => {
   const { id } = req.params;
   const { 
     item_name, 
@@ -1012,7 +1012,7 @@ router.patch('/:id/reject', authenticate, authorize('supervisor', 'accounting'),
 });
 
 // PATCH /api/requests/:id/liquidation
-router.patch('/:id/liquidation', authenticate, authorize('employee'), async (req: any, res) => {
+router.patch('/:id/liquidation', authenticate, authorize('employee', 'manager'), async (req: any, res) => {
   const { id } = req.params;
   const actualAmount = toNumber(req.body?.actual_amount);
   const remarks = toText(req.body?.remarks);

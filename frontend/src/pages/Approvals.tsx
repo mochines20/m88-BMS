@@ -5,43 +5,7 @@ import Modal from '../components/Modal';
 import { supabase } from '../lib/supabase';
 import FilePreviewer from '../components/FilePreviewer';
 import { buildCategorySearchString, getCategoryCode } from '../utils/categories';
-
-const formatMoney = (value: number) =>
-  new Intl.NumberFormat('en-PH', {
-    style: 'currency',
-    currency: 'PHP',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(Number.isFinite(value) ? value : 0);
-
-const toNumber = (value: unknown) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-};
-
-const getStatusLabel = (status: string) => {
-  switch (status) {
-    case 'pending_supervisor':
-      return 'Waiting for Supervisor Approval';
-    case 'on_hold':
-      return 'On Hold';
-    case 'pending_accounting':
-      return 'Waiting for Accounting Approval';
-    case 'returned_for_revision':
-      return 'Returned for Revision';
-    case 'released':
-      return 'Released';
-    case 'approved':
-      return 'Approved';
-    case 'rejected':
-      return 'Rejected';
-    default:
-      return status.replace(/_/g, ' ');
-  }
-};
-
-const getRequesterName = (req: any) =>
-  req.requester_name || req.users?.name || req.user?.name || req.employee_name || req.requested_by || 'Unknown requester';
+import { formatMoney, toNumber, getStatusLabel, getRequesterName } from '../utils/format';
 
 // Format category with account codes for display
 const formatCategoryWithCodes = (category: string): string => {
@@ -71,6 +35,11 @@ const Approvals = () => {
   const [endDate, setEndDate] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedRequests, setSelectedRequests] = useState<Set<string>>(new Set());
+  const [dualAuthThreshold, setDualAuthThreshold] = useState<number>(500000);
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
     requestId: string;
@@ -91,6 +60,16 @@ const Approvals = () => {
 
   useEffect(() => {
     const token = localStorage.getItem('token');
+    api.get('/api/config/auth-thresholds', { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => {
+        if (res.data?.dual_auth_threshold) {
+          setDualAuthThreshold(Number(res.data.dual_auth_threshold));
+        }
+      })
+      .catch(() => {
+        // keep default
+      });
+
     api.get('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => {
         setUser(res.data);
@@ -147,17 +126,55 @@ const Approvals = () => {
   const fetchRequests = async (role = user?.role) => {
     const token = localStorage.getItem('token');
     try {
-      const res = await api.get('/api/requests', { headers: { Authorization: `Bearer ${token}` } });
-      
-      // Filter based on view
-      const filtered = res.data.filter((request: any) => {
-        if (view === 'pending') {
-          return (role === 'supervisor' && request.status === 'pending_supervisor') ||
-                 (role === 'accounting' && request.status === 'pending_accounting');
-        } else {
-          return request.latest_liquidation?.status === 'submitted';
-        }
-      });
+      let filtered: any[] = [];
+
+      if (view === 'liquidations' && (role === 'accounting' || role === 'admin')) {
+        const cashAdvanceRes = await api.get('/api/cash-advances?status=pending_liquidation_review', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        filtered = await Promise.all(
+          (cashAdvanceRes.data || []).map(async (advance: any) => {
+            const detailRes = await api.get(`/api/cash-advances/${advance.id}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            const detailed = detailRes.data || {};
+            const liquidationItems = detailed.liquidation_items || [];
+            const actualAmount = liquidationItems.reduce((sum: number, item: any) => sum + toNumber(item.amount), 0);
+
+            return {
+              id: advance.id,
+              cash_advance_id: advance.id,
+              request_code: advance.advance_code,
+              item_name: `Liquidation Review - ${advance.advance_code}`,
+              amount: actualAmount || toNumber(advance.amount_issued),
+              purpose: advance.purpose,
+              status: 'pending_liquidation_review',
+              submitted_at: advance.updated_at || advance.issued_at,
+              department_name: advance.department?.name || detailed.department?.name || '',
+              employee_name: advance.employee?.name || detailed.employee?.name || '',
+              users: { name: advance.employee?.name || detailed.employee?.name || 'Unknown requester' },
+              attachments: detailed.attachments || [],
+              latest_liquidation: {
+                status: 'submitted',
+                actual_amount: actualAmount,
+                remarks: '',
+                due_at: advance.liquidation_due_at || detailed.liquidation_due_at || null
+              },
+              liquidation_items: liquidationItems
+            };
+          })
+        );
+      } else {
+        const res = await api.get('/api/requests', { headers: { Authorization: `Bearer ${token}` } });
+        filtered = (res.data || []).filter((request: any) => {
+          if (view === 'pending') {
+            return (role === 'supervisor' && request.status === 'pending_supervisor') ||
+                   ((role === 'accounting' || role === 'admin') && ['pending_accounting', 'on_hold'].includes(request.status));
+          }
+          return false;
+        });
+      }
 
       setRequests(filtered);
       setAllocationDrafts((current) => {
@@ -251,7 +268,13 @@ const Approvals = () => {
   const handleLiquidationReview = async (requestId: string, status: 'verified' | 'returned') => {
     const token = localStorage.getItem('token');
     try {
-      await api.patch(`/api/requests/${requestId}/liquidation/review`, { status }, { headers: { Authorization: `Bearer ${token}` } });
+      const target = requests.find((entry) => entry.id === requestId);
+      const cashAdvanceId = target?.cash_advance_id || requestId;
+      await api.post(
+        `/api/cash-advances/${cashAdvanceId}/review-liquidation`,
+        { action: status === 'verified' ? 'approve' : 'reject' },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       toast.success(`Liquidation ${status === 'verified' ? 'verified' : 'returned'}!`);
       await fetchRequests();
     } catch (err: any) {
@@ -267,7 +290,7 @@ const Approvals = () => {
 
     const token = localStorage.getItem('token');
     try {
-      if (user?.role === 'accounting') {
+      if (user?.role === 'accounting' || user?.role === 'admin') {
         // Validation check for petty cash before submitting
         const currentDraft = releaseDrafts[request.id];
         if (currentDraft?.release_method === 'petty_cash') {
@@ -295,7 +318,41 @@ const Approvals = () => {
       fetchRequests();
       fetchDepartments();
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Approval failed');
+      const errorMsg = err.response?.data?.error || '';
+      if (err.response?.data?.budget_check && errorMsg.includes('Insufficient budget')) {
+        if (confirm(`${errorMsg}\n\nDo you want to override and approve anyway?`)) {
+          try {
+            await api.patch(
+              `/api/requests/${request.id}/approve`,
+              { force_approve: true, note: 'Supervisor override - insufficient budget' },
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+            toast.success('Request approved with override!');
+            fetchRequests();
+            fetchDepartments();
+            return;
+          } catch (overrideErr: any) {
+            toast.error(overrideErr.response?.data?.error || 'Override failed');
+            return;
+          }
+        }
+      }
+      if (err.response?.data?.requires_co_approval) {
+        toast.error('This request needs co-approval first. Ask another accounting user to click Co-approve Request.');
+        return;
+      }
+      toast.error(errorMsg || 'Approval failed');
+    }
+  };
+
+  const handleCoApprove = async (request: any) => {
+    const token = localStorage.getItem('token');
+    try {
+      await api.post(`/api/requests/${request.id}/co-approve`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      toast.success('Co-approved! Request can now be released.');
+      fetchRequests();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Co-approval failed');
     }
   };
 
@@ -575,7 +632,7 @@ const Approvals = () => {
         </p>
       </div>
 
-      {user?.role === 'accounting' && (
+      {(user?.role === 'accounting' || user?.role === 'admin') && (
         <div className="mb-6 space-y-4">
           {/* View Toggle + Search */}
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -797,8 +854,14 @@ const Approvals = () => {
           <p className="mt-2 text-[var(--role-text)]/60">New requests will appear here automatically when they reach your stage.</p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {filteredRequests.map((req) => {
+        (() => {
+          const startIndex = (currentPage - 1) * pageSize;
+          const paginatedData = filteredRequests.slice(startIndex, startIndex + pageSize);
+          const totalPages = Math.max(1, Math.ceil(filteredRequests.length / pageSize));
+          
+          return (
+            <div className="space-y-4">
+              {paginatedData.map((req) => {
             const draftRows = allocationDrafts[req.id] || [];
             const draftTotal = getDraftTotal(req.id);
             const requestAmount = toNumber(req.amount);
@@ -915,7 +978,8 @@ const Approvals = () => {
 
                         <div>
                           <p className="mb-2 text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/50">Receipt / Attachment</p>
-                          {req.attachments?.filter((a: any) => a.attachment_scope === 'liquidation').map((attachment: any) => (
+                          {(req.attachments || []).filter((a: any) => a.attachment_scope === 'liquidation').length > 0 ? (
+                            (req.attachments || []).filter((a: any) => a.attachment_scope === 'liquidation').map((attachment: any) => (
                             <div key={attachment.id} className="group relative overflow-hidden rounded-2xl border border-[var(--role-border)] bg-[var(--role-accent)]">
                               <img 
                                 src={attachment.file_url} 
@@ -930,9 +994,35 @@ const Approvals = () => {
                                 <span className="btn-secondary">Preview Image</span>
                               </button>
                             </div>
-                          )) || (
+                            ))
+                          ) : (
                             <div className="flex h-[200px] items-center justify-center rounded-2xl border border-dashed border-[var(--role-border)] bg-[var(--role-accent)]">
                               <p className="text-[var(--role-text)]/40">No receipt attached</p>
+                            </div>
+                          )}
+
+                          {Array.isArray(req.liquidation_items) && req.liquidation_items.length > 0 && (
+                            <div className="mt-4 overflow-hidden rounded-xl border border-[var(--role-border)]/20 bg-[var(--role-surface)]">
+                              <table className="w-full text-left text-xs">
+                                <thead className="bg-[var(--role-accent)]/70 text-[var(--role-text)]/70">
+                                  <tr>
+                                    <th className="px-3 py-2">Date</th>
+                                    <th className="px-3 py-2">Description</th>
+                                    <th className="px-3 py-2">Receipt</th>
+                                    <th className="px-3 py-2 text-right">Amount</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {req.liquidation_items.map((item: any) => (
+                                    <tr key={item.id} className="border-t border-[var(--role-border)]/10">
+                                      <td className="px-3 py-2">{item.expense_date || '-'}</td>
+                                      <td className="px-3 py-2">{item.description || '-'}</td>
+                                      <td className="px-3 py-2">{item.receipt_attached ? 'Yes' : 'No'}</td>
+                                      <td className="px-3 py-2 text-right font-semibold">{formatMoney(toNumber(item.amount))}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
                             </div>
                           )}
                         </div>
@@ -1011,7 +1101,7 @@ const Approvals = () => {
                       </div>
                     )}
 
-                    {user.role === 'accounting' && (
+                    {(user.role === 'accounting' || user.role === 'admin') && (
                       <div className="mb-5 rounded-[24px] border border-[var(--role-border)] bg-[var(--role-accent)] p-4">
                         <button
                           type="button"
@@ -1124,7 +1214,7 @@ const Approvals = () => {
                       </div>
                     )}
 
-                    {user.role === 'accounting' && (
+                    {(user.role === 'accounting' || user.role === 'admin') && (
                       <div className="mb-5 rounded-[24px] border border-[var(--role-border)] bg-[var(--role-accent)] p-4">
                         <div className="flex items-center justify-between mb-4">
                           <h3 className="text-lg font-semibold text-[var(--role-text)]">Release Details</h3>
@@ -1172,6 +1262,31 @@ const Approvals = () => {
                             onChange={(event) => updateReleaseDraft(req.id, 'release_note', event.target.value)}
                           />
                         </div>
+                        {requestAmount >= dualAuthThreshold && (
+                          <div className="mt-4 rounded-2xl border border-[var(--role-border)] bg-[var(--role-surface)] p-4">
+                            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                              <div>
+                                <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--role-text)]/50">Dual Authorization</p>
+                                <p className="mt-1 text-sm text-[var(--role-text)]/70">
+                                  Requests at or above {formatMoney(dualAuthThreshold)} need a second accounting approval before release.
+                                </p>
+                              </div>
+                              {req.co_approved_by ? (
+                                <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-600">
+                                  Co-approved
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleCoApprove(req)}
+                                  className="btn-secondary"
+                                >
+                                  Co-approve Request
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
                         {releaseDrafts[req.id]?.release_method === 'petty_cash' && toNumber(budgetSummary?.petty_cash_balance) < requestAmount && (
                           <p className="mt-3 text-[10px] text-red-500 font-bold uppercase tracking-tighter flex items-center gap-1 animate-pulse">
                             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1202,10 +1317,19 @@ const Approvals = () => {
                       <button 
                         onClick={() => void handleApprove(req)} 
                         className="btn-success"
-                        disabled={req.status === 'on_hold'}
-                        title={req.status === 'on_hold' ? 'Cannot release - request is On Hold' : ''}
+                        disabled={
+                          req.status === 'on_hold' ||
+                          ((user.role === 'accounting' || user.role === 'admin') && requestAmount >= dualAuthThreshold && !req.co_approved_by)
+                        }
+                        title={
+                          req.status === 'on_hold'
+                            ? 'Cannot release - request is On Hold'
+                            : ((user.role === 'accounting' || user.role === 'admin') && requestAmount >= dualAuthThreshold && !req.co_approved_by)
+                              ? 'Co-approval required before release'
+                              : ''
+                        }
                       >
-                        {user.role === 'accounting' ? 'Release' : 'Approve'}
+                        {(user.role === 'accounting' || user.role === 'admin') ? 'Release' : 'Approve'}
                       </button>
                       <button
                         onClick={() => {
@@ -1239,7 +1363,7 @@ const Approvals = () => {
                       >
                         Return for Revision
                       </button>
-                      {user.role === 'accounting' && (
+                      {(user.role === 'accounting' || user.role === 'admin') && (
                         <button
                           onClick={() => toggleOnHold(req.id)}
                           className={`px-4 py-2 rounded-2xl text-sm font-semibold transition ${
@@ -1272,7 +1396,37 @@ const Approvals = () => {
               </div>
             );
           })}
-        </div>
+              
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between pt-4 border-t border-[var(--role-border)]">
+                  <p className="text-sm text-[var(--role-text)]/60">
+                    Showing {startIndex + 1} to {Math.min(startIndex + pageSize, filteredRequests.length)} of {filteredRequests.length} requests
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      className="px-3 py-1.5 rounded-lg border border-[var(--role-border)] bg-[var(--role-accent)] text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--role-accent)]/80 transition"
+                    >
+                      Previous
+                    </button>
+                    <span className="text-sm text-[var(--role-text)]/80 px-2">
+                      Page {currentPage} of {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-1.5 rounded-lg border border-[var(--role-border)] bg-[var(--role-accent)] text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--role-accent)]/80 transition"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()
       )}
 
       <Modal

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import toast from 'react-hot-toast';
-import { formatMoney, toNumber } from '../utils/format';
+import { formatMoney, toNumber, getStatusColor } from '../utils/format';
 
 interface Request {
   id: string;
@@ -24,16 +24,16 @@ interface CashAdvance {
   liquidation_due_at: string;
 }
 
-const getStatusLabel = (status: string, requestType?: string) => {
+const getEmployeeStatusLabel = (status: string, requestType?: string) => {
+  // Employee view uses simplified labels
   switch (status) {
     case 'pending_supervisor':
-      return 'Pending';
     case 'pending_accounting':
       return 'Pending';
     case 'on_hold':
       return 'On Hold';
     case 'approved':
-      return requestType === 'cash_advance' ? 'Approved' : 'Approved';
+      return 'Approved';
     case 'released':
       return requestType === 'cash_advance' ? 'Issued' : 'Released';
     case 'rejected':
@@ -42,24 +42,6 @@ const getStatusLabel = (status: string, requestType?: string) => {
       return 'Returned';
     default:
       return status.replace(/_/g, ' ');
-  }
-};
-
-const getStatusColor = (status: string) => {
-  switch (status) {
-    case 'pending_supervisor':
-    case 'pending_accounting':
-      return 'bg-amber-100 text-amber-700 border border-amber-200';
-    case 'on_hold':
-      return 'bg-orange-100 text-orange-700 border border-orange-200';
-    case 'approved':
-    case 'released':
-      return 'bg-emerald-100 text-emerald-700 border border-emerald-200';
-    case 'rejected':
-    case 'returned_for_revision':
-      return 'bg-red-100 text-red-700 border border-red-200';
-    default:
-      return 'bg-gray-100 text-gray-700 border border-gray-200';
   }
 };
 
@@ -138,6 +120,43 @@ const EmployeeHome = () => {
         <h1 className="page-title">Welcome, {user?.name || user?.email?.split('@')[0] || 'Employee'}</h1>
         <p className="page-subtitle">Submit and track your expense requests</p>
       </div>
+
+      {/* Quick Stats Bar */}
+      {(() => {
+        const totalSubmitted = myRequests.length;
+        const totalApproved = myRequests.filter(r => r.status === 'approved' || r.status === 'released').length;
+        const pendingCount = myRequests.filter(r => ['pending_supervisor', 'pending_accounting'].includes(r.status)).length;
+        const currentMonthAmount = myRequests
+          .filter(r => {
+            const submittedDate = new Date(r.submitted_at);
+            const now = new Date();
+            return submittedDate.getMonth() === now.getMonth() && 
+                   submittedDate.getFullYear() === now.getFullYear() &&
+                   (r.status === 'approved' || r.status === 'released');
+          })
+          .reduce((sum, r) => sum + toNumber(r.amount), 0);
+        
+        return (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div className="panel !p-4">
+              <p className="text-xs text-[var(--role-text)]/60 uppercase tracking-wider">Total Submitted</p>
+              <p className="text-2xl font-bold text-[var(--role-primary)]">{totalSubmitted}</p>
+            </div>
+            <div className="panel !p-4">
+              <p className="text-xs text-[var(--role-text)]/60 uppercase tracking-wider">Approved</p>
+              <p className="text-2xl font-bold text-emerald-600">{totalApproved}</p>
+            </div>
+            <div className="panel !p-4">
+              <p className="text-xs text-[var(--role-text)]/60 uppercase tracking-wider">Pending</p>
+              <p className="text-2xl font-bold text-amber-600">{pendingCount}</p>
+            </div>
+            <div className="panel !p-4">
+              <p className="text-xs text-[var(--role-text)]/60 uppercase tracking-wider">This Month</p>
+              <p className="text-xl font-bold text-[var(--role-secondary)]">{formatMoney(currentMonthAmount)}</p>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Quick Action Buttons */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
@@ -294,7 +313,7 @@ const EmployeeHome = () => {
                     </td>
                     <td className="py-3">
                       <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(req.status)}`}>
-                        {getStatusLabel(req.status, req.request_type)}
+                        {getEmployeeStatusLabel(req.status, req.request_type)}
                       </span>
                     </td>
                     <td className="py-3 text-right">

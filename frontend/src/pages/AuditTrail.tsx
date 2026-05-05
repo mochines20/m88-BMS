@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api';
 import toast from 'react-hot-toast';
-import { formatDateTime } from '../utils/format';
+import { formatDateTime, formatActionLabel } from '../utils/format';
 
 interface AuditLog {
   id: string;
@@ -12,6 +12,9 @@ interface AuditLog {
   actor_role: string;
   stage?: string;
   note?: string;
+  entity_type?: string;
+  old_value?: string;
+  new_value?: string;
   created_at: string;
 }
 
@@ -31,6 +34,7 @@ const AuditTrail = () => {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [requestInfo, setRequestInfo] = useState<RequestInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  const [actionFilter, setActionFilter] = useState('all');
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -85,12 +89,16 @@ const AuditTrail = () => {
           </svg>
         );
       case 'approved':
+      case 'co_approved':
+      case 'force_approved':
+      case 'liquidation_approved':
         return (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
         );
       case 'rejected':
+      case 'liquidation_rejected':
         return (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -109,6 +117,20 @@ const AuditTrail = () => {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         );
+      case 'user_updated':
+        return (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+          </svg>
+        );
+      case 'budget_category_created':
+      case 'budget_category_updated':
+      case 'budget_category_deleted':
+        return (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+          </svg>
+        );
       default:
         return (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -123,18 +145,34 @@ const AuditTrail = () => {
       case 'submitted':
         return 'bg-blue-100 text-blue-700 border-blue-200';
       case 'approved':
+      case 'co_approved':
+      case 'force_approved':
+      case 'liquidation_approved':
         return 'bg-emerald-100 text-emerald-700 border-emerald-200';
       case 'rejected':
+      case 'liquidation_rejected':
         return 'bg-red-100 text-red-700 border-red-200';
       case 'returned':
       case 'returned_for_revision':
         return 'bg-amber-100 text-amber-700 border-amber-200';
       case 'released':
         return 'bg-purple-100 text-purple-700 border-purple-200';
+      case 'user_updated':
+        return 'bg-sky-100 text-sky-700 border-sky-200';
+      case 'budget_category_created':
+        return 'bg-teal-100 text-teal-700 border-teal-200';
+      case 'budget_category_updated':
+        return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+      case 'budget_category_deleted':
+        return 'bg-rose-100 text-rose-700 border-rose-200';
       default:
         return 'bg-gray-100 text-gray-700 border-gray-200';
     }
   };
+
+  const filteredLogs = actionFilter === 'all'
+    ? logs
+    : logs.filter(log => log.action.toLowerCase() === actionFilter);
 
   if (loading) {
     return (
@@ -186,6 +224,39 @@ const AuditTrail = () => {
         </div>
       )}
 
+      {/* Action Filter */}
+      <div className="panel mb-6">
+        <div className="flex flex-wrap gap-4 items-end">
+          <div>
+            <label className="block text-sm font-medium text-[var(--role-text)]/60 mb-1">Action Type</label>
+            <select
+              className="field-input"
+              value={actionFilter}
+              onChange={(e) => setActionFilter(e.target.value)}
+            >
+              <option value="all">All Actions</option>
+              <option value="submitted">Submitted</option>
+              <option value="approved">Approved</option>
+              <option value="co_approved">Co-Approved</option>
+              <option value="force_approved">Force Approved</option>
+              <option value="released">Released</option>
+              <option value="rejected">Rejected</option>
+              <option value="returned">Returned</option>
+              <option value="returned_for_revision">Returned for Revision</option>
+              <option value="liquidation_approved">Liquidation Approved</option>
+              <option value="liquidation_rejected">Liquidation Rejected</option>
+              <option value="user_updated">User Updated</option>
+              <option value="budget_category_created">Budget Category Created</option>
+              <option value="budget_category_updated">Budget Category Updated</option>
+              <option value="budget_category_deleted">Budget Category Deleted</option>
+            </select>
+          </div>
+          <p className="text-sm text-[var(--role-text)]/60">
+            {filteredLogs.length} of {logs.length} entries
+          </p>
+        </div>
+      </div>
+
       {/* Audit Timeline */}
       <div className="panel">
         <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
@@ -195,7 +266,7 @@ const AuditTrail = () => {
           Activity Timeline
         </h2>
 
-        {logs.length === 0 ? (
+        {filteredLogs.length === 0 ? (
           <div className="text-center py-8 text-[var(--role-text)]/60">
             <svg className="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
@@ -208,7 +279,7 @@ const AuditTrail = () => {
             <div className="absolute left-6 top-0 bottom-0 w-0.5 bg-[var(--role-border)]"></div>
 
             <div className="space-y-6">
-              {logs.map((log, index) => (
+              {filteredLogs.map((log, index) => (
                 <div key={log.id || index} className="relative flex gap-4">
                   {/* Icon */}
                   <div className={`relative z-10 w-12 h-12 rounded-full flex items-center justify-center border-2 ${getActionColor(log.action)}`}>
@@ -218,10 +289,15 @@ const AuditTrail = () => {
                   {/* Content */}
                   <div className="flex-1 pt-1">
                     <div className="flex flex-wrap items-center gap-2 mb-1">
-                      <span className="font-semibold">{log.action.replace(/_/g, ' ').toUpperCase()}</span>
+                      <span className="font-semibold">{formatActionLabel(log.action)}</span>
                       {log.stage && (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--role-accent)] text-[var(--role-text)]/70">
                           {log.stage}
+                        </span>
+                      )}
+                      {log.entity_type && log.entity_type !== 'system' && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--role-secondary)]/10 text-[var(--role-secondary)]">
+                          {log.entity_type.replace(/_/g, ' ')}
                         </span>
                       )}
                       <span className="text-sm text-[var(--role-text)]/60 ml-auto">

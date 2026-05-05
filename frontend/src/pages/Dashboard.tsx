@@ -6,7 +6,10 @@ import { supabase } from '../lib/supabase';
 import {
   formatMoney,
   toNumber,
-  formatUptime
+  formatUptime,
+  normalizeDisplayName,
+  getRequesterName,
+  getRequesterDepartment
 } from '../utils/format';
 import {
   BarChart,
@@ -57,12 +60,6 @@ const getStatusTone = (status: string) => {
   }
 };
 
-const getRequesterName = (request: any) =>
-  request.requester_name || request.users?.name || request.user?.name || request.employee_name || request.requested_by || 'Unknown requester';
-
-const getRequesterDepartment = (request: any) =>
-  request.department_name || request.departments?.name || request.department?.name || 'Unknown department';
-
 const getRoleHeadline = (role?: string) => {
   switch (role) {
     case 'employee':
@@ -95,11 +92,6 @@ const getRoleFocus = (role?: string) => {
   }
 };
 
-const normalizeDisplayName = (name: string) => {
-  const trimmedName = String(name || '').trim();
-  return trimmedName.toLowerCase() === 'byahero' ? 'Byahero' : trimmedName;
-};
-
 const condenseLogs = (logs: any[]) => {
   return logs.reduce((acc: any[], log: any) => {
     const previous = acc[acc.length - 1];
@@ -129,6 +121,7 @@ const Dashboard = () => {
   const [systemHealth, setSystemHealth] = useState<any>(null);
   const [flowPage, setFlowPage] = useState(1);
   const [archiveView, setArchiveView] = useState<'active' | 'archived' | 'all'>('active');
+  const [departmentBudget, setDepartmentBudget] = useState<any>(null);
 
   const pageSize = 3;
 
@@ -162,13 +155,25 @@ const Dashboard = () => {
         ]);
         setUser(userResponse.data);
         
-        // Redirect employees to EmployeeHome
-        if (userResponse.data.role === 'employee') {
+        // Redirect employees and managers to EmployeeHome
+        if (userResponse.data.role === 'employee' || userResponse.data.role === 'manager') {
           navigate('/employee');
           return;
         }
         
         setRequests(requestsResponse.data);
+
+        // Fetch department budget for supervisors and accounting
+        if ((userResponse.data.role === 'supervisor' || userResponse.data.role === 'accounting') && userResponse.data.department_id) {
+          try {
+            const budgetRes = await api.get(`/api/departments/${userResponse.data.department_id}/budget-breakdown`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            setDepartmentBudget(budgetRes.data);
+          } catch {
+            setDepartmentBudget(null);
+          }
+        }
 
         if (userResponse.data.role === 'super_admin') {
           void fetchSystemHealthInternal();
@@ -551,7 +556,7 @@ const Dashboard = () => {
       </div>
 
       <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {user.role === 'employee' ? (
+        {user.role === 'employee' || user.role === 'manager' ? (
           <>
             <div className="stat-card group relative overflow-hidden">
               <div className="absolute inset-0 bg-gradient-to-br from-[var(--role-primary)]/20 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
@@ -588,13 +593,17 @@ const Dashboard = () => {
             </div>
             <div className="stat-card group relative overflow-hidden">
               <div className="absolute inset-0 bg-gradient-to-br from-[var(--role-primary)]/20 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-              <p className="stat-label">Department Total</p>
-              <h3 className="stat-value">{stats.total}</h3>
+              <p className="stat-label">Dept Budget</p>
+              <h3 className="stat-value" style={{ color: 'var(--role-primary)' }}>
+                {formatMoney(departmentBudget?.totals?.annual_budget || 0)}
+              </h3>
             </div>
             <div className="stat-card group relative overflow-hidden">
               <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/20 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-              <p className="stat-label">Released Amount</p>
-              <h3 className="stat-value" style={{ color: 'var(--role-text)' }}>{formatMoney(stats.releasedAmount)}</h3>
+              <p className="stat-label">Budget Remaining</p>
+              <h3 className="stat-value" style={{ color: '#10B981' }}>
+                {formatMoney((departmentBudget?.totals?.annual_budget || 0) - (departmentBudget?.totals?.used_budget || 0))}
+              </h3>
             </div>
           </>
         ) : user.role === 'super_admin' ? (
@@ -650,7 +659,7 @@ const Dashboard = () => {
         )}
       </div>
 
-      {user.role !== 'employee' && user.role !== 'super_admin' && (
+      {user.role !== 'employee' && user.role !== 'manager' && user.role !== 'super_admin' && (
         <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
           <div className="panel">
             <h2 className="mb-4 text-xl font-bold text-[var(--role-text)]">Budget Utilization</h2>
@@ -716,7 +725,7 @@ const Dashboard = () => {
       )}
 
       {/* Monthly Spending Trends - Full Width */}
-      {user.role !== 'employee' && user.role !== 'super_admin' && (
+      {user.role !== 'employee' && user.role !== 'manager' && user.role !== 'super_admin' && (
         <div className="mb-8 panel">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-bold text-[var(--role-text)]">Monthly Spending Trends</h2>
@@ -767,13 +776,79 @@ const Dashboard = () => {
         </div>
       )}
 
+      {/* Department Category Budget Breakdown - For Supervisors */}
+      {(user.role === 'supervisor' || user.role === 'accounting') && departmentBudget?.categories && departmentBudget.categories.length > 0 && (
+        <div className="mb-8 panel">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-bold text-[var(--role-text)]">Department Budget Categories</h2>
+              <p className="text-sm text-[var(--role-text)]/70 mt-1">
+                {departmentBudget.department?.name} • FY{departmentBudget.department?.fiscal_year}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-[var(--role-text)]/50">Total Allocated</p>
+              <p className="text-lg font-semibold text-[var(--role-primary)]">
+                {formatMoney(departmentBudget.categories.reduce((sum: number, cat: any) => sum + (cat.budget_amount || 0), 0))}
+              </p>
+            </div>
+          </div>
+          
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {departmentBudget.categories.map((cat: any) => (
+              <div key={cat.id} className="flex items-center justify-between p-3 rounded-xl border border-[var(--role-border)] bg-[var(--role-accent)]">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-[var(--role-text)] truncate">{cat.category_name}</p>
+                  <p className="text-xs text-[var(--role-text)]/50">{cat.category_code}</p>
+                </div>
+                <div className="text-right ml-4">
+                  <p className="text-sm font-semibold text-[var(--role-text)]">{formatMoney(cat.budget_amount || 0)}</p>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-emerald-600">Used: {formatMoney(cat.used_amount || 0)}</span>
+                    <span className="text-[var(--role-text)]/30">|</span>
+                    <span className="text-blue-600">Rem: {formatMoney(cat.remaining_amount || 0)}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          <div className="mt-4 pt-4 border-t border-[var(--role-border)]">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-[var(--role-text)]/70">Budget Health</span>
+              <span className={`font-medium ${
+                (departmentBudget.totals?.used_budget / departmentBudget.totals?.annual_budget) > 0.9 
+                  ? 'text-red-600' 
+                  : (departmentBudget.totals?.used_budget / departmentBudget.totals?.annual_budget) > 0.7 
+                    ? 'text-yellow-600' 
+                    : 'text-emerald-600'
+              }`}>
+                {((departmentBudget.totals?.used_budget || 0) / (departmentBudget.totals?.annual_budget || 1) * 100).toFixed(1)}% Utilized
+              </span>
+            </div>
+            <div className="mt-2 h-2 bg-[var(--role-accent)] rounded-full overflow-hidden">
+              <div 
+                className={`h-full rounded-full ${
+                  (departmentBudget.totals?.used_budget / departmentBudget.totals?.annual_budget) > 0.9 
+                    ? 'bg-red-500' 
+                    : (departmentBudget.totals?.used_budget / departmentBudget.totals?.annual_budget) > 0.7 
+                      ? 'bg-yellow-500' 
+                      : 'bg-emerald-500'
+                }`}
+                style={{ width: `${Math.min(100, ((departmentBudget.totals?.used_budget || 0) / (departmentBudget.totals?.annual_budget || 1)) * 100)}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mb-8 grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr_0.8fr]">
         <div className="panel">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-2xl font-bold text-[var(--role-text)]">{getRoleFocus(user.role)}</h2>
               <p className="mt-2 text-sm text-[var(--role-text)]/70">
-                {user.role === 'employee'
+                {user.role === 'employee' || user.role === 'manager'
                   ? 'Track your budget requests and their approval progress.'
                   : user.role === 'supervisor'
                   ? 'Review and approve department requests efficiently.'
@@ -808,7 +883,7 @@ const Dashboard = () => {
                   ))}
                 </div>
               )}
-              {user.role !== 'employee' && user.role !== 'super_admin' && (
+              {user.role !== 'employee' && user.role !== 'manager' && user.role !== 'super_admin' && (
                 <div className="rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] px-4 py-2 text-sm text-[var(--role-text)]/70">
                   Total Amount: <span className="font-semibold text-[var(--role-text)]">{formatMoney(stats.totalAmount)}</span>
                 </div>
@@ -817,7 +892,7 @@ const Dashboard = () => {
           </div>
 
           <div className="mt-5 space-y-3">
-            {user.role !== 'employee' && user.role !== 'super_admin' && (
+            {user.role !== 'employee' && user.role !== 'manager' && user.role !== 'super_admin' && (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <div className="panel-muted !p-4">
                   <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/50">Pending Amount</p>
@@ -973,10 +1048,10 @@ const Dashboard = () => {
         <div className="space-y-6">
           <div className="panel">
             <h2 className="text-2xl font-bold text-[var(--role-text)]">
-              {user.role === 'employee' ? 'Your Tasks' : user.role === 'supervisor' ? 'Approval Queue' : user.role === 'super_admin' ? 'Root Access' : 'Financial Controls'}
+              {user.role === 'employee' || user.role === 'manager' ? 'Your Tasks' : user.role === 'supervisor' ? 'Approval Queue' : user.role === 'super_admin' ? 'Root Access' : 'Financial Controls'}
             </h2>
             <p className="mt-2 text-sm text-[var(--role-text)]/70">
-              {user.role === 'employee' 
+              {user.role === 'employee' || user.role === 'manager'
                 ? 'Submit and track your budget requests.' 
                 : user.role === 'supervisor' 
                 ? 'Manage team requests awaiting your review.' 
@@ -985,7 +1060,7 @@ const Dashboard = () => {
                 : 'Oversee fund releases and financial reports.'}
             </p>
             <div className="mt-5 grid grid-cols-1 gap-3">
-              {user.role === 'employee' && (
+              {(user.role === 'employee' || user.role === 'manager') && (
                 <>
                   <button onClick={() => navigate('/request')} className="btn-primary w-full !justify-start items-center gap-4 min-h-[72px]">
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--role-text-inverse)]/20">
@@ -1140,10 +1215,10 @@ const Dashboard = () => {
 
           <div className="panel">
           <h2 className="text-2xl font-bold text-[var(--role-text)]">
-            {user.role === 'employee' ? 'Request Guide' : user.role === 'supervisor' ? 'Review Guide' : user.role === 'super_admin' ? 'System Guide' : 'Release Guide'}
+            {user.role === 'employee' || user.role === 'manager' ? 'Request Guide' : user.role === 'supervisor' ? 'Review Guide' : user.role === 'super_admin' ? 'System Guide' : 'Release Guide'}
           </h2>
           <div className="mt-5 space-y-3">
-            {user.role === 'employee' ? (
+            {user.role === 'employee' || user.role === 'manager' ? (
               <>
                 {[
                   ['Awaiting Supervisor', 'Your request is being reviewed by your department head.'],

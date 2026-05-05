@@ -135,20 +135,7 @@ CREATE INDEX IF NOT EXISTS idx_cash_advances_status ON cash_advances(status);
 CREATE INDEX IF NOT EXISTS idx_cash_advances_due ON cash_advances(liquidation_due_at);
 CREATE INDEX IF NOT EXISTS idx_liquidation_items_advance ON liquidation_items(cash_advance_id);
 
--- 7. Insert default budget categories for existing departments
-INSERT INTO budget_categories (department_id, fiscal_year, category_code, category_name, budget_amount)
-SELECT 
-  d.id as department_id,
-  d.fiscal_year,
-  'PERSONNEL' as category_code,
-  'Personnel Cost' as category_name,
-  d.annual_budget * 0.5 as budget_amount
-FROM departments d
-WHERE NOT EXISTS (
-  SELECT 1 FROM budget_categories bc 
-  WHERE bc.department_id = d.id AND bc.fiscal_year = d.fiscal_year
-)
-ON CONFLICT DO NOTHING;
+-- 7. (Removed) Default PERSONNEL budget categories are no longer seeded.
 
 -- 8. Insert sample cost centers for existing departments
 INSERT INTO cost_centers (department_id, cost_center_code, cost_center_name, description)

@@ -1,17 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
+import { normalizeDisplayName } from '../utils/format';
 
 interface DepartmentOption {
   id: string;
   name: string;
   fiscal_year?: number;
 }
-
-const normalizeDisplayName = (name: string) => {
-  const trimmedName = String(name || '').trim();
-  return trimmedName.toLowerCase() === 'byahero' ? 'Byahero' : trimmedName;
-};
 
 const Profile = () => {
   const [user, setUser] = useState<any>(null);
@@ -92,11 +88,11 @@ const Profile = () => {
     return <div className="text-[var(--role-text)]">Profile not available.</div>;
   }
 
-  if (user.role !== 'employee' && user.role !== 'supervisor') {
+  if (user.role !== 'employee' && user.role !== 'manager' && user.role !== 'supervisor') {
     return (
       <div className="panel text-[var(--role-text)]">
         <h1 className="page-title text-3xl">Profile</h1>
-        <p className="mt-3 text-[var(--role-text)]/80">Department self-edit is currently available for employees and supervisors only.</p>
+        <p className="mt-3 text-[var(--role-text)]/80">Department self-edit is currently available for employees, managers, and supervisors only.</p>
       </div>
     );
   }
