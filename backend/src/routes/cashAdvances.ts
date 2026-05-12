@@ -197,6 +197,17 @@ router.post('/', authenticate, authorize('accounting', 'admin', 'super_admin'), 
       return res.status(404).json({ error: 'Request not found' });
     }
 
+    // Prevent duplicate cash advances for the same request
+    const { data: existingCA } = await supabase
+      .from('cash_advances')
+      .select('id, advance_code')
+      .eq('request_id', request_id)
+      .maybeSingle();
+
+    if (existingCA) {
+      return res.status(409).json({ error: `A cash advance (${existingCA.advance_code}) already exists for this request.` });
+    }
+
     const advanceCode = `CA-${Date.now().toString().slice(-6)}`;
 
     const { data, error } = await supabase

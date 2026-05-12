@@ -83,6 +83,8 @@ const NewRequestForm = () => {
 
   // Helper: Filter items by main category
   const getItemsByMainCategory = (mainCategory: string, canUse: 'canRE' | 'canCA') => {
+    // For liquidations, don't filter by approved expense items
+    if (canUse === 'canRE') return [];
     return officialList.filter(item => 
       item.category === mainCategory && 
       item[canUse] === true
@@ -1359,33 +1361,13 @@ const NewRequestForm = () => {
                       </td>
                       {/* Sub-category Column - Only shows items from selected main category */}
                       <td className="py-2">
-                        <select
+                        <input
+                          type="text"
                           value={item.description}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            const selectedItem = officialList.find(i => `${i.code} | ${i.itemName}` === val);
-                            updateLiquidationItem(index, 'description', val);
-                            if (selectedItem) {
-                              const catId = categories.find(c => c.category_name === selectedItem.category)?.id;
-                              if (catId) updateLiquidationItem(index, 'category_id', catId);
-                            }
-                          }}
-                          disabled={!item.main_category}
-                          className="w-full px-2 py-2 rounded-lg border border-[var(--role-border)] bg-[var(--role-surface)] text-sm disabled:bg-gray-100"
-                        >
-                          <option value="">{item.main_category ? 'Select item...' : 'Select main category first'}</option>
-                          {item.main_category && getItemsByMainCategory(item.main_category, 'canRE')
-                            .filter(off => {
-                              const userDeptName = departments.find(d => d.id === user?.department_id)?.name || '';
-                              const allowedDepts = Array.isArray(off.dept) ? off.dept : [off.dept];
-                              return (allowedDepts.includes('All Dept') || allowedDepts.some(d => d.toLowerCase() === userDeptName.toLowerCase()));
-                            })
-                            .map(off => (
-                              <option key={off.code} value={`${off.code} | ${off.itemName}`}>
-                                {off.code} | {off.itemName}
-                              </option>
-                            ))}
-                        </select>
+                          onChange={(e) => updateLiquidationItem(index, 'description', e.target.value)}
+                          placeholder="Enter description..."
+                          className="w-full px-2 py-2 rounded-lg border border-[var(--role-border)] bg-[var(--role-surface)] text-sm"
+                        />
                       </td>
                       <td className="py-2">
                         <div className="relative">

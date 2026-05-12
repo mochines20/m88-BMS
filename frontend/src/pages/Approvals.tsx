@@ -48,6 +48,8 @@ const Approvals = () => {
 
   const [departments, setDepartments] = useState<any[]>([]);
 
+  const [budgetCategories, setBudgetCategories] = useState<any[]>([]);
+
   const [allocationDrafts, setAllocationDrafts] = useState<Record<string, Array<{ department_id: string; amount: string }>>>({});
 
   const [priorityDrafts, setPriorityDrafts] = useState<Record<string, string>>({});
@@ -299,9 +301,13 @@ const Approvals = () => {
 
     try {
 
-      const res = await api.get('/api/departments', { headers: { Authorization: `Bearer ${token}` } });
+      const [deptRes, catRes] = await Promise.all([
+        api.get('/api/departments', { headers: { Authorization: `Bearer ${token}` } }),
+        api.get('/api/budget/categories?all_years=true', { headers: { Authorization: `Bearer ${token}` } })
+      ]);
 
-      setDepartments(res.data);
+      setDepartments(deptRes.data);
+      setBudgetCategories(catRes.data || []);
 
     } catch {
 
@@ -544,14 +550,15 @@ const Approvals = () => {
           if (effectiveView === 'vp_approval') {
             // VP sees requests <= 500K needing approval
             // President sees requests > 500K needing approval
-            // Both see pending_accounting requests that need their approval
-            if (role === 'vp' && amount <= threshold && request.status === 'pending_accounting' && !request.co_approved_by) {
+            // Both see pending_accounting + on_hold requests that need their approval
+            const isActionable = request.status === 'pending_accounting' || request.status === 'on_hold';
+            if (role === 'vp' && amount <= threshold && isActionable && !request.co_approved_by) {
               return true;
             }
-            if (role === 'president' && amount > threshold && request.status === 'pending_accounting' && !request.co_approved_by) {
+            if (role === 'president' && amount > threshold && isActionable && !request.co_approved_by) {
               return true;
             }
-            if (role === 'admin' && request.status === 'pending_accounting' && !request.co_approved_by) {
+            if (role === 'admin' && isActionable && !request.co_approved_by) {
               return true;
             }
             return false;
@@ -964,12 +971,13 @@ const Approvals = () => {
     
 
     const isAccountingOrAdmin = user?.role === 'accounting' || user?.role === 'admin' || user?.role === 'super_admin';
+    const isVPOrPresident = user?.role === 'vp' || user?.role === 'president';
     
     const promises = Array.from(selectedRequests).map(async (requestId) => {
 
       try {
 
-        // Accounting/Admin users use /release endpoint with disbursement details, Supervisors use /approve
+        // Accounting/Admin users use /release endpoint with disbursement details, VP/President use /approve, Supervisors use /approve
         if (isAccountingOrAdmin) {
           const draft = disbursementDrafts[requestId] || {};
           await api.patch(
@@ -982,6 +990,8 @@ const Approvals = () => {
             },
             { headers: { Authorization: `Bearer ${token}` } }
           );
+        } else if (isVPOrPresident) {
+          await api.patch(`/api/requests/${requestId}/approve`, {}, { headers: { Authorization: `Bearer ${token}` } });
         } else {
           await api.patch(`/api/requests/${requestId}/approve`, {}, { headers: { Authorization: `Bearer ${token}` } });
         }
@@ -1336,21 +1346,24 @@ const Approvals = () => {
 
 
 
-  const departmentOptions = useMemo(
-
-    () =>
-
-      departments.map((department) => ({
-
-        id: department.id,
-
-        label: `${department.name} • Remaining ${formatMoney(toNumber(department.remaining_budget))} • Projected ${formatMoney(toNumber(department.projected_remaining_budget))}`
-
-      })),
-
-    [departments]
-
-  );
+  const getDepartmentOptionsForRequest = (req: any) => {
+    const categoryName = String(req.category || '').trim().toLowerCase();
+    const reqFiscalYear = req.fiscal_year ?? null;
+    return departments
+      .filter((dept) => {
+        if (!categoryName) return true;
+        return budgetCategories.some(
+          (cat) =>
+            cat.department_id === dept.id &&
+            String(cat.category_name || '').trim().toLowerCase() === categoryName &&
+            (reqFiscalYear === null || cat.fiscal_year === reqFiscalYear)
+        );
+      })
+      .map((dept) => ({
+        id: dept.id,
+        label: `${dept.name} • Remaining ${formatMoney(toNumber(dept.remaining_budget))} • Projected ${formatMoney(toNumber(dept.projected_remaining_budget))}`
+      }));
+  };
 
 
 
@@ -1925,13 +1938,24 @@ const Approvals = () => {
 
                         )}
 
-                        <h2 className="text-2xl font-bold text-[var(--role-text)]">{req.item_name}</h2>
-
-                        <span className="rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] px-3 py-1 text-sm font-medium text-[var(--role-text)]">
-
-                          {getStatusLabel(req.status)}
-
-                        </span>
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center gap-3">
+                            <span className="rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] px-3 py-1 text-sm font-medium text-[var(--role-text)]">
+                              {(() => {
+                                switch (req.request_type) {
+                                  case 'reimbursement': return 'Reimbursement';
+                                  case 'cash_advance': return 'Cash Advance';
+                                  case 'liquidation': return 'Liquidation';
+                                  default: return 'Expense';
+                                }
+                              })()}
+                            </span>
+                            <span className="rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] px-3 py-1 text-sm font-medium text-[var(--role-text)]">
+                              {getStatusLabel(req.status)}
+                            </span>
+                          </div>
+                          <h2 className="text-2xl font-bold text-[var(--role-text)]">{req.item_name}</h2>
+                        </div>
 
                         {/* SLA Tracking Indicator */}
 
@@ -1997,11 +2021,11 @@ const Approvals = () => {
 
                                 <tr>
 
-                                  <th className="px-4 py-2 font-semibold">Date</th>
-
-                                  <th className="px-4 py-2 font-semibold">Payee</th>
-
-                                  <th className="px-4 py-2 font-semibold">Type</th>
+                                  {req.metadata.items[0]?.expense_date !== undefined ? (
+                                    <><th className="px-4 py-2 font-semibold">Date</th><th className="px-4 py-2 font-semibold">Payee</th><th className="px-4 py-2 font-semibold">Type</th></>
+                                  ) : (
+                                    <><th className="px-4 py-2 font-semibold">Item</th><th className="px-4 py-2 font-semibold">Category</th><th className="px-4 py-2 font-semibold"></th></>
+                                  )}
 
                                   <th className="px-4 py-2 text-right font-semibold">Amount</th>
 
@@ -2015,11 +2039,11 @@ const Approvals = () => {
 
                                   <tr key={idx} className="border-b border-[var(--role-border)]/5 last:border-0">
 
-                                    <td className="px-4 py-2">{item.expense_date}</td>
-
-                                    <td className="px-4 py-2">{item.payee_name}</td>
-
-                                    <td className="px-4 py-2">{item.expense_type}</td>
+                                    {item.expense_date !== undefined ? (
+                                      <><td className="px-4 py-2">{item.expense_date}</td><td className="px-4 py-2">{item.payee_name}</td><td className="px-4 py-2">{item.expense_type}</td></>
+                                    ) : (
+                                      <><td className="px-4 py-2">{item.item_name}</td><td className="px-4 py-2">{item.category}</td><td className="px-4 py-2"></td></>
+                                    )}
 
                                     <td className="px-4 py-2 text-right font-medium">{formatMoney(item.amount)}</td>
 
@@ -2501,7 +2525,7 @@ const Approvals = () => {
 
                                   >
 
-                                    {departmentOptions.map((option) => (
+                                    {getDepartmentOptionsForRequest(req).map((option) => (
 
                                       <option key={option.id} value={option.id}>
 

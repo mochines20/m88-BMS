@@ -42,14 +42,19 @@ const syncDepartmentBudget = async (department_id: string, fiscal_year: number) 
 // GET /api/budget/categories - Get budget categories for a department
 router.get('/categories', authenticate, async (req: any, res) => {
   try {
-    const { department_id, fiscal_year } = req.query;
+    const { department_id, fiscal_year, all_years } = req.query;
     const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
     const targetFiscalYear = fiscal_year ? parseInt(fiscal_year as string) : activeFiscalYear;
 
     let query = supabase
       .from('budget_categories')
-      .select('*')
-      .eq('fiscal_year', targetFiscalYear);
+      .select('*');
+
+    if (all_years === 'true') {
+      // Return all fiscal years (used by accounting for department filtering)
+    } else {
+      query = query.eq('fiscal_year', targetFiscalYear);
+    }
 
     if (department_id && department_id !== '') {
       query = query.eq('department_id', department_id);

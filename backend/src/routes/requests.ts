@@ -552,17 +552,33 @@ router.post('/', authenticate, authorize('employee', 'manager', 'supervisor', 'a
   const normalizedAttachments = normalizeAttachments(attachments);
   const initialStatus = (userRole === 'employee' || userRole === 'manager') ? 'pending_supervisor' : 'pending_accounting';
   
-  // 1. Validate against Official Expense List
-  const { data: deptData } = await supabase.from('departments').select('name').eq('id', targetDepartmentId).single();
-  const departmentName = deptData?.name || 'Unknown';
-  
-  // If multiple items provided, validate each one
-  if (items && items.length > 0) {
-    for (const item of items) {
-      const validation = validateExpense(item.item_name, departmentName, request_type);
+  // 1. Validate against Official Expense List (skip for liquidations)
+  if (request_type !== 'liquidation') {
+    const { data: deptData } = await supabase.from('departments').select('name').eq('id', targetDepartmentId).single();
+    const departmentName = deptData?.name || 'Unknown';
+    
+    // If multiple items provided, validate each one
+    if (items && items.length > 0) {
+      for (const item of items) {
+        const validation = validateExpense(item.item_name, departmentName, request_type);
+        if (!validation.allowed) {
+          return res.status(400).json({ 
+            error: `Invalid item "${item.item_name}": ${validation.reason}`,
+            details: {
+              code: validation.code,
+              category: validation.category,
+              required_department: validation.department,
+              can_ca: validation.canCA,
+              can_re: validation.canRE
+            }
+          });
+        }
+      }
+    } else {
+      const validation = validateExpense(item_name, departmentName, request_type);
       if (!validation.allowed) {
         return res.status(400).json({ 
-          error: `Invalid item "${item.item_name}": ${validation.reason}`,
+          error: validation.reason,
           details: {
             code: validation.code,
             category: validation.category,
@@ -573,103 +589,47 @@ router.post('/', authenticate, authorize('employee', 'manager', 'supervisor', 'a
         });
       }
     }
-  } else {
-    const validation = validateExpense(item_name, departmentName, request_type);
-    if (!validation.allowed) {
-      return res.status(400).json({ 
-        error: validation.reason,
-        details: {
-          code: validation.code,
-          category: validation.category,
-          required_department: validation.department,
-          can_ca: validation.canCA,
-          can_re: validation.canRE
-        }
-      });
+  }
+
+  // 2. Validate both department projected remaining AND category remaining
+  const totalAmount = toNumber(amount);
+  
+  // Check department projected remaining
+  const { data: deptSummary, error: summaryError } = await supabase
+    .from('departments')
+    .select('annual_budget, used_budget, petty_cash_balance')
+    .eq('id', targetDepartmentId)
+    .single();
+  
+  if (summaryError || !deptSummary) {
+    return res.status(400).json({ error: 'Department budget not found' });
+  }
+
+  const annualBudget = toNumber(deptSummary.annual_budget);
+  const usedBudget = toNumber(deptSummary.used_budget);
+  const pettyCashBalance = toNumber(deptSummary.petty_cash_balance);
+  const projectedRemaining = annualBudget - usedBudget - pettyCashBalance;
+
+  // Check category remaining if category specified
+  let categoryRemaining = Infinity;
+  if (category || category_id) {
+    const catQuery = category_id 
+      ? supabase.from('budget_categories').select('remaining_amount').eq('id', category_id).eq('fiscal_year', activeFiscalYear).single()
+      : supabase.from('budget_categories').select('remaining_amount').eq('category_name', category.trim()).eq('department_id', targetDepartmentId).eq('fiscal_year', activeFiscalYear).single();
+    const { data: catData } = await catQuery;
+    if (catData) {
+      categoryRemaining = toNumber(catData.remaining_amount);
     }
   }
 
-  // 2. Validate category budget before submission (check per category for multiple items)
-  const totalAmount = toNumber(amount);
-  
-  if (items && items.length > 0 && targetDepartmentId) {
-    // Group items by category and sum amounts
-    const categoryTotals = items.reduce((acc: Record<string, number>, item: any) => {
-      const catName = item.category || category;
-      if (catName) {
-        acc[catName] = (acc[catName] || 0) + toNumber(item.amount);
-      }
-      return acc;
-    }, {});
-    
-    // Validate budget for each category
-    for (const [catName, catTotalAmount] of Object.entries(categoryTotals)) {
-      const catTotal = toNumber(catTotalAmount);
-      const { data: categoryBudget, error: categoryError } = await supabase
-        .from('budget_categories')
-        .select('id, budget_amount, used_amount, committed_amount, remaining_amount')
-        .eq('category_name', catName)
-        .eq('department_id', targetDepartmentId)
-        .eq('fiscal_year', activeDepartment.fiscal_year)
-        .single();
-      
-      if (categoryError && categoryError.code !== 'PGRST116') {
-        return res.status(400).json({ error: `Failed to validate budget for category "${catName}"` });
-      }
-      
-      if (!categoryBudget) {
-        return res.status(400).json({ 
-          error: `No budget allocated for "${catName}" in your department`,
-          message: `Please contact your department's accounting team to set up a budget for "${catName}" category.`,
-          code: 'NO_BUDGET_CATEGORY',
-          category: catName,
-          department_id: targetDepartmentId,
-          fiscal_year: activeDepartment.fiscal_year
-        });
-      }
-      
-      const remaining = toNumber(categoryBudget.remaining_amount);
-      
-      if (remaining < catTotal) {
-        return res.status(400).json({ 
-          error: `Insufficient budget in category "${catName}". Available: ${remaining.toFixed(2)}, Requested: ${catTotal.toFixed(2)}` 
-        });
-      }
-    }
-  } else if (category && targetDepartmentId) {
-    // Single item/category validation (original logic)
-    const { data: categoryBudget, error: categoryError } = await supabase
-      .from('budget_categories')
-      .select('id, budget_amount, used_amount, committed_amount, remaining_amount')
-      .eq('category_name', category)
-      .eq('department_id', targetDepartmentId)
-      .eq('fiscal_year', activeDepartment.fiscal_year)
-      .single();
-    
-    if (categoryError && categoryError.code !== 'PGRST116') {
-      return res.status(400).json({ error: 'Failed to validate category budget' });
-    }
-    
-    if (!categoryBudget) {
-      return res.status(400).json({ 
-        error: `No budget allocated for "${category}" in your department`,
-        message: `Please contact your department's accounting team to set up a budget for "${category}" category.`,
-        code: 'NO_BUDGET_CATEGORY',
-        category: category,
-        department_id: targetDepartmentId,
-        fiscal_year: activeDepartment.fiscal_year
-      });
-    }
-    
-    const remaining = toNumber(categoryBudget.remaining_amount);
-    
-    if (remaining < totalAmount) {
-      return res.status(400).json({ 
-        error: `Insufficient budget in category "${category}". Available: ${remaining.toFixed(2)}, Requested: ${totalAmount.toFixed(2)}` 
-      });
-    }
+  const finalRemaining = Math.min(projectedRemaining, categoryRemaining);
+
+  if (finalRemaining < totalAmount) {
+    return res.status(400).json({ 
+      error: `Insufficient budget. Remaining: ${finalRemaining.toFixed(2)}, Requested: ${totalAmount.toFixed(2)}` 
+    });
   }
-  
+
   const { data, error } = await supabase
     .from('expense_requests')
     .insert({
@@ -708,7 +668,21 @@ router.post('/', authenticate, authorize('employee', 'manager', 'supervisor', 'a
     }
   }
 
-  // Update committed_amount in budget_categories for each item's category
+  // Update department used_budget instead of category commitments
+  const { data: deptForUpdate } = await supabase
+    .from('departments')
+    .select('used_budget')
+    .eq('id', targetDepartmentId)
+    .single();
+
+  if (deptForUpdate) {
+    await supabase.from('departments').update({
+      used_budget: toNumber(deptForUpdate.used_budget) + totalAmount,
+      updated_at: new Date()
+    }).eq('id', targetDepartmentId);
+  }
+
+  // Still update category commitments for tracking (but department used_budget is primary)
   if (items && items.length > 0) {
     // Multiple items: commit each item's category individually
     for (const item of items) {
@@ -725,12 +699,12 @@ router.post('/', authenticate, authorize('employee', 'manager', 'supervisor', 'a
         }).eq('id', itemCategoryId);
       }
     }
-    // Store first item's category_id on the request if not already set
+    // Store first item's category_id on request if not already set
     if (!category_id && items[0]?.category_id) {
       await supabase.from('expense_requests').update({ category_id: items[0].category_id }).eq('id', data.id);
     }
-  } else {
-    // Single item: original logic
+  } else if (category_id || category) {
+    // Single item: update category for tracking
     const effectiveCategoryId = category_id || (category ? (await supabase.from('budget_categories').select('id').eq('category_name', category.trim()).eq('department_id', targetDepartmentId).eq('fiscal_year', activeFiscalYear).maybeSingle()).data?.id : null);
     if (effectiveCategoryId) {
       const { data: categoryBudget } = await supabase.from('budget_categories').select('committed_amount, remaining_amount').eq('id', effectiveCategoryId).single();
@@ -1328,8 +1302,8 @@ router.patch('/:id/approve', authenticate, authorize('supervisor', 'vp', 'presid
     if (!accessibleDepartmentIds.includes(request.department_id)) return res.status(403).json({ error: 'Forbidden' });
   }
 
-  if (req.user.role !== 'supervisor') {
-    return res.status(400).json({ error: 'Accounting approvals now require release details. Use the release action instead.' });
+  if (req.user.role !== 'supervisor' && req.user.role !== 'vp' && req.user.role !== 'president' && req.user.role !== 'admin') {
+    return res.status(400).json({ error: 'Only supervisors, VP, President, and admin can approve requests.' });
   }
 
   if (request.status !== 'pending_supervisor') {
@@ -1678,7 +1652,31 @@ router.patch('/:id/resubmit', authenticate, authorize('employee', 'manager', 'su
   }
 
   const newAmount = normalizedAmount || request.amount;
-  // Supervisor/accounting submitters bypass the supervisor stage on resubmit
+  
+  // Validate budget before resubmit
+  const targetDeptId = req.body?.department_id || request.department_id;
+  if (targetDeptId) {
+    const { data: deptSummary, error: summaryError } = await supabase
+      .from('departments')
+      .select('annual_budget, used_budget, petty_cash_balance')
+      .eq('id', targetDeptId)
+      .single();
+    
+    if (!summaryError && deptSummary) {
+      const annualBudget = toNumber(deptSummary.annual_budget);
+      const usedBudget = toNumber(deptSummary.used_budget);
+      const pettyCashBalance = toNumber(deptSummary.petty_cash_balance);
+      const projectedRemaining = annualBudget - usedBudget - pettyCashBalance;
+
+      if (projectedRemaining < newAmount) {
+        return res.status(400).json({ 
+          error: `Insufficient budget. Annual Budget: ${annualBudget.toFixed(2)}, Remaining: ${projectedRemaining.toFixed(2)}, Requested: ${newAmount.toFixed(2)}` 
+        });
+      }
+    }
+  }
+
+  // Supervisor/accounting submitters bypass supervisor stage on resubmit
   const resubmitStatus = (req.user.role === 'supervisor' || req.user.role === 'accounting') ? 'pending_accounting' : 'pending_supervisor';
 
   const { data, error } = await supabase

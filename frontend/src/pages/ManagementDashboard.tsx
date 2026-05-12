@@ -55,7 +55,8 @@ const ManagementDashboard = () => {
     try {
       const [deptRes, reqRes, caRes] = await Promise.all([
         api.get('/api/departments', { headers: { Authorization: `Bearer ${token}` } }),
-        api.get('/api/reports/requests', { headers: { Authorization: `Bearer ${token}` } }),
+        // Only fetch reports if user is not super admin
+        ...(user?.role !== 'super_admin' ? [api.get('/api/reports/requests', { headers: { Authorization: `Bearer ${token}` } })] : []),
         api.get('/api/cash-advances', { headers: { Authorization: `Bearer ${token}` } })
       ]);
       setDepartments(deptRes.data || []);
@@ -63,6 +64,10 @@ const ManagementDashboard = () => {
       setCashAdvances(caRes.data || []);
     } catch (err) {
       toast.error('Failed to load management data');
+      // If super admin gets 403 on reports access, still show other data
+      if (user?.role === 'super_admin' && err.response?.status === 403) {
+        console.log('Super admin reports access restricted - loading other data only');
+      }
     } finally {
       setLoading(false);
     }

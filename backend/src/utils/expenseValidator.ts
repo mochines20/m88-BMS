@@ -120,7 +120,20 @@ export const OFFICIAL_EXPENSE_LIST: ExpenseItem[] = [
   { code: '9900', itemName: 'Sundry & Misc', category: 'Sundry', dept: 'All Dept', canCA: true, canRE: true }
 ];
 
-export function validateExpense(itemName: string, departmentName: string, requestType: 'cash_advance' | 'reimbursement'): ExpenseEligibility {
+export function validateExpense(itemName: string, departmentName: string, requestType: 'cash_advance' | 'reimbursement' | 'liquidation'): ExpenseEligibility {
+  // Liquidations don't need validation against official expense list
+  if (requestType === 'liquidation') {
+    return {
+      allowed: true,
+      code: 'N/A',
+      category: 'Liquidation',
+      department: departmentName,
+      canCA: false,
+      canRE: false,
+      reason: ''
+    };
+  }
+
   const item = OFFICIAL_EXPENSE_LIST.find(
     (e) => e.itemName.toLowerCase() === itemName.toLowerCase() || 
            `${e.code} | ${e.itemName}`.toLowerCase() === itemName.toLowerCase()

@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authorize } from '../middleware/auth';
 import { supabase } from '../utils/supabase';
 import PDFDocument from 'pdfkit';
 import ExcelJS from 'exceljs';
@@ -36,7 +36,7 @@ const toCanonicalDepartmentName = (value: string) => {
 };
 
 // GET /api/reports/filter-options
-router.get('/filter-options', authenticate, async (req: any, res) => {
+router.get('/filter-options', authenticate, authorize('accounting', 'admin'), async (req: any, res) => {
   const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
   let requestQuery = supabase
     .from('expense_requests')
@@ -179,7 +179,7 @@ router.get('/summary', authenticate, async (req: any, res) => {
 });
 
 // GET /api/reports/requests?dept=&from=&to=&archived=false&status=&category=&format=json|pdf|excel
-router.get('/requests', authenticate, async (req: any, res) => {
+router.get('/requests', authenticate, authorize('accounting', 'admin'), async (req: any, res) => {
   const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
   const { dept, from, to, status, category, fiscal_year, archived = 'false', format } = req.query;
   let query = supabase.from('expense_requests').select(REQUESTS_REPORT_SELECT);
