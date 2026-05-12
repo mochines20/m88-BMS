@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
-import { toNumber, formatMoney } from '../utils/format';
+import { toNumber, formatMoney, formatDateTime , getErrorMessage } from '../utils/format';
 
 interface DepartmentOption {
   id: string;
@@ -257,7 +257,7 @@ const Reports = () => {
       doc.setFontSize(18);
       doc.text('Madison88 Budget Request Report', 14, 22);
       doc.setFontSize(10);
-      doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
+      doc.text(`Generated: ${formatDateTime(new Date().toISOString())}`, 14, 30);
       doc.text(`Filters: FY ${filters.fiscal_year || 'All'}, Status: ${filters.status || 'All'}`, 14, 36);
 
       autoTable(doc, {
@@ -270,7 +270,7 @@ const Reports = () => {
           req.item_name?.substring(0, 30) + (req.item_name?.length > 30 ? '...' : ''),
           `PHP ${Number(req.amount).toLocaleString()}`,
           req.status?.replace('_', ' ') || '-',
-          req.submitted_at ? new Date(req.submitted_at).toLocaleString() : '-'
+          req.submitted_at ? formatDateTime(req.submitted_at) : '-'
         ]),
         styles: { fontSize: 8 },
         headStyles: { fillColor: [49, 72, 122] }
@@ -342,6 +342,7 @@ const Reports = () => {
       const key = `${row.department_id || 'unknown'}::${row.department_name || 'Unknown Department'}`;
       if (!acc[key]) {
         acc[key] = {
+          department_id: row.department_id || 'unknown',
           department_name: row.department_name || 'Unknown Department',
           budget: 0,
           actual: 0,
@@ -368,6 +369,7 @@ const Reports = () => {
   );
 
   const profitLossRows = trialBalanceRows.map((row) => ({
+    department_id: row.department_id,
     department_name: row.department_name,
     budget: toNumber(row.budget),
     expense_actual: toNumber(row.actual),
@@ -390,71 +392,81 @@ const Reports = () => {
       setArchiveConfirm({ isOpen: false, requestId: '', archived: false });
       void fetchRequests();
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Archive operation failed');
+      toast.error(getErrorMessage(err, 'Archive operation failed'));
     }
   };
 
   // Export Trial Balance to PDF
   const exportTrialBalanceToPDF = () => {
-    const doc = new jsPDF();
-    doc.setFontSize(18);
-    doc.text('Trial Balance Report', 14, 22);
-    doc.setFontSize(10);
-    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
-    doc.text(`Fiscal Year: ${filters.fiscal_year || 'All'}`, 14, 36);
+    try {
+      const doc = new jsPDF();
+      doc.setFontSize(18);
+      doc.text('Trial Balance Report', 14, 22);
+      doc.setFontSize(10);
+      doc.text(`Generated: ${formatDateTime(new Date().toISOString())}`, 14, 30);
+      doc.text(`Fiscal Year: ${filters.fiscal_year || 'All'}`, 14, 36);
 
-    autoTable(doc, {
-      startY: 42,
-      head: [['Department', 'Budget (Dr)', 'Actual (Cr)', 'Committed', 'Remaining']],
-      body: [
-        ...trialBalanceRows.map(row => [
-          row.department_name,
-          formatMoney(toNumber(row.budget)),
-          formatMoney(toNumber(row.actual)),
-          formatMoney(toNumber(row.committed)),
-          formatMoney(toNumber(row.remaining))
-        ]),
-        ['TOTAL', 
-          formatMoney(trialBalanceTotals.budget),
-          formatMoney(trialBalanceTotals.actual),
-          formatMoney(trialBalanceTotals.committed),
-          formatMoney(trialBalanceTotals.remaining)
-        ]
-      ],
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [49, 72, 122] }
-    });
+      autoTable(doc, {
+        startY: 42,
+        head: [['Department', 'Budget (Dr)', 'Actual (Cr)', 'Committed', 'Remaining']],
+        body: [
+          ...trialBalanceRows.map(row => [
+            row.department_name,
+            formatMoney(toNumber(row.budget)),
+            formatMoney(toNumber(row.actual)),
+            formatMoney(toNumber(row.committed)),
+            formatMoney(toNumber(row.remaining))
+          ]),
+          ['TOTAL', 
+            formatMoney(trialBalanceTotals.budget),
+            formatMoney(trialBalanceTotals.actual),
+            formatMoney(trialBalanceTotals.committed),
+            formatMoney(trialBalanceTotals.remaining)
+          ]
+        ],
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [49, 72, 122] }
+      });
 
-    doc.save(`trial-balance-${new Date().toISOString().slice(0, 10)}.pdf`);
-    toast.success('Trial Balance exported to PDF');
+      doc.save(`trial-balance-${new Date().toISOString().slice(0, 10)}.pdf`);
+      toast.success('Trial Balance exported to PDF');
+    } catch (err: any) {
+      console.error('PDF export error:', err);
+      toast.error('Failed to export Trial Balance to PDF. Please try again.');
+    }
   };
 
   // Export P&L to PDF
   const exportPLToPDF = () => {
-    const doc = new jsPDF();
-    doc.setFontSize(18);
-    doc.text('P&L by Department', 14, 22);
-    doc.setFontSize(10);
-    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
-    doc.text(`Fiscal Year: ${filters.fiscal_year || 'All'}`, 14, 36);
+    try {
+      const doc = new jsPDF();
+      doc.setFontSize(18);
+      doc.text('P&L by Department', 14, 22);
+      doc.setFontSize(10);
+      doc.text(`Generated: ${formatDateTime(new Date().toISOString())}`, 14, 30);
+      doc.text(`Fiscal Year: ${filters.fiscal_year || 'All'}`, 14, 36);
 
-    autoTable(doc, {
-      startY: 42,
-      head: [['Department', 'Budget', 'Actual Expense', 'Committed', 'Variance', 'Variance %']],
-      body: profitLossRows.map(row => [
-        row.department_name,
-        formatMoney(row.budget),
-        formatMoney(row.expense_actual),
-        formatMoney(row.expense_committed),
-        formatMoney(row.variance),
-        `${row.variance_pct.toFixed(1)}%`
-      ]),
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [49, 72, 122] }
-    });
+      autoTable(doc, {
+        startY: 42,
+        head: [['Department', 'Budget', 'Actual Expense', 'Committed', 'Variance', 'Variance %']],
+        body: profitLossRows.map(row => [
+          row.department_name,
+          formatMoney(row.budget),
+          formatMoney(row.expense_actual),
+          formatMoney(row.expense_committed),
+          formatMoney(row.variance),
+          `${row.variance_pct.toFixed(1)}%`
+        ]),
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [49, 72, 122] }
+      });
 
-    doc.save(`pnl-report-${new Date().toISOString().slice(0, 10)}.pdf`);
-    toast.success('P&L Report exported to PDF');
+      doc.save(`pnl-report-${new Date().toISOString().slice(0, 10)}.pdf`);
+      toast.success('P&L Report exported to PDF');
+    } catch (err: any) {
+      console.error('PDF export error:', err);
+      toast.error('Failed to export P&L to PDF. Please try again.');
+    }
   };
 
   // Pagination helper
@@ -742,7 +754,7 @@ const Reports = () => {
                   </thead>
                   <tbody>
                     {trialBalanceRows.map((row) => (
-                      <tr key={row.department_name} className="table-row">
+                      <tr key={`tb-${row.department_id}-${row.department_name}`} className="table-row">
                         <td className="p-3 font-medium">{row.department_name}</td>
                         <td className="p-3 text-right">{formatMoney(toNumber(row.budget))}</td>
                         <td className="p-3 text-right">{formatMoney(toNumber(row.actual))}</td>
@@ -794,7 +806,7 @@ const Reports = () => {
                   </thead>
                   <tbody>
                     {profitLossRows.map((row) => (
-                      <tr key={`pl-${row.department_name}`} className="table-row">
+                      <tr key={`pl-${row.department_id}-${row.department_name}`} className="table-row">
                         <td className="p-3 font-medium">{row.department_name}</td>
                         <td className="p-3 text-right">{formatMoney(row.budget)}</td>
                         <td className="p-3 text-right">{formatMoney(row.expense_actual)}</td>
@@ -852,7 +864,7 @@ const Reports = () => {
                     <td className="p-4">{req.item_name}</td>
                     <td className="p-4">PHP {Number(req.amount).toFixed(2)}</td>
                     <td className="p-4 capitalize">{req.status.replace('_', ' ')}</td>
-                    <td className="p-4">{req.submitted_at ? new Date(req.submitted_at).toLocaleString() : '-'}</td>
+                    <td className="p-4">{req.submitted_at ? formatDateTime(req.submitted_at) : '-'}</td>
                     {user?.role === 'accounting' && (
                       <td className="p-4">
                         {['released', 'rejected'].includes(req.status) && (
@@ -954,7 +966,7 @@ const Reports = () => {
                         <td className="p-4">{item.employee_name}</td>
                         <td className="p-4">{item.item_name}</td>
                         <td className="p-4">PHP {Number(item.amount).toFixed(2)}</td>
-                        <td className="p-4">{item.due_at ? new Date(item.due_at).toLocaleString() : '-'}</td>
+                        <td className="p-4">{item.due_at ? formatDateTime(item.due_at) : '-'}</td>
                         <td className="p-4">
                           <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
                             item.aging_status === 'overdue' ? 'bg-red-500/20 text-red-600' :

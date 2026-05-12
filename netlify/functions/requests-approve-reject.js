@@ -1,6 +1,7 @@
 const { supabase } = require('../utils/supabase');
 const { authenticate, authorize } = require('../utils/auth');
 const { sendEmail } = require('../utils/email');
+const { adjustCategoryCommitted, adjustCategoryReleased, toNumber } = require('../utils/budget');
 
 exports.handler = async (event, context) => {
   if (event.httpMethod === 'OPTIONS') {
@@ -43,17 +44,27 @@ exports.handler = async (event, context) => {
 
       let newStatus = '';
       let stage = '';
+      
       if (user.role === 'supervisor') {
         newStatus = 'pending_accounting';
         stage = 'accounting';
+        
+        // COMMIT budget in category when supervisor approves
+        await adjustCategoryCommitted(request, request.amount);
       } else if (user.role === 'accounting') {
         const { data: dept } = await supabase.from('departments').select('*').eq('id', request.department_id).single();
-        if (dept.annual_budget - dept.used_budget < request.amount) {
-          return { statusCode: 400, body: JSON.stringify({ error: 'Insufficient budget' }) };
+        if (toNumber(dept.annual_budget) - toNumber(dept.used_budget) < toNumber(request.amount)) {
+          return { statusCode: 400, body: JSON.stringify({ error: 'Insufficient department budget' }) };
         }
+        
         newStatus = 'released';
         stage = 'finance';
-        await supabase.from('departments').update({ used_budget: dept.used_budget + request.amount }).eq('id', dept.id);
+        
+        // DEDUCT from annual budget
+        await supabase.from('departments').update({ used_budget: toNumber(dept.used_budget) + toNumber(request.amount) }).eq('id', dept.id);
+        
+        // DEDUCT from category budget (and release commitment)
+        await adjustCategoryReleased(request);
       }
 
       const { data, error } = await supabase
@@ -95,6 +106,11 @@ exports.handler = async (event, context) => {
 
       const { reason } = JSON.parse(event.body);
       const stage = user.role === 'supervisor' ? 'supervisor' : 'accounting';
+
+      // If accounting rejects, un-commit the budget
+      if (user.role === 'accounting' && request.status === 'pending_accounting') {
+        await adjustCategoryCommitted(request, -request.amount);
+      }
 
       const { data, error } = await supabase
         .from('expense_requests')

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
-import { normalizeDisplayName } from '../utils/format';
+import { normalizeDisplayName , getErrorMessage } from '../utils/format';
 
 interface DepartmentOption {
   id: string;
@@ -26,7 +26,7 @@ const Profile = () => {
       try {
         const [meResponse, departmentsResponse] = await Promise.all([
           api.get('/api/auth/me', { headers: authHeaders }),
-          api.get<DepartmentOption[]>('/api/auth/signup-departments')
+          api.get<DepartmentOption[]>('/api/departments', { headers: authHeaders })
         ]);
 
         setUser(meResponse.data);
@@ -35,7 +35,7 @@ const Profile = () => {
         setDepartments(departmentsResponse.data || []);
         setIsLoadingDepartments(false);
       } catch (err: any) {
-        toast.error(err.response?.data?.error || 'Failed to load profile');
+        toast.error(getErrorMessage(err, 'Failed to load profile'));
         setIsLoadingDepartments(false);
       } finally {
         setIsLoading(false);
@@ -52,19 +52,23 @@ const Profile = () => {
       return;
     }
 
-    if (!departmentId) {
+    // VP and President don't have departments, so skip department validation for them
+    if (!departmentId && user.role !== 'vp' && user.role !== 'president') {
       toast.error('Please select a department');
       return;
     }
 
     setIsSaving(true);
     try {
+      const payload: any = { name: trimmedName };
+      // Only include department_id for roles that have departments
+      if (user.role !== 'vp' && user.role !== 'president' && user.role !== 'super_admin') {
+        payload.department_id = departmentId || null;
+      }
+      
       const response = await api.patch(
         '/api/auth/profile',
-        {
-          name: trimmedName,
-          department_id: departmentId
-        },
+        payload,
         { headers: authHeaders }
       );
 
@@ -74,7 +78,7 @@ const Profile = () => {
       setDepartmentId(response.data.user.department_id || departmentId);
       toast.success('Profile updated!');
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to update profile');
+      toast.error(getErrorMessage(err, 'Failed to update profile'));
     } finally {
       setIsSaving(false);
     }
@@ -88,11 +92,13 @@ const Profile = () => {
     return <div className="text-[var(--role-text)]">Profile not available.</div>;
   }
 
-  if (user.role !== 'employee' && user.role !== 'manager' && user.role !== 'supervisor') {
+  // Profile is available for employees, managers, supervisors, vp, and president
+  // (super_admin uses Admin page for profile management)
+  if (user.role !== 'employee' && user.role !== 'manager' && user.role !== 'supervisor' && user.role !== 'vp' && user.role !== 'president') {
     return (
       <div className="panel text-[var(--role-text)]">
         <h1 className="page-title text-3xl">Profile</h1>
-        <p className="mt-3 text-[var(--role-text)]/80">Department self-edit is currently available for employees, managers, and supervisors only.</p>
+        <p className="mt-3 text-[var(--role-text)]/80">Profile self-edit is currently available for employees, managers, supervisors, VP, and President only.</p>
       </div>
     );
   }
@@ -101,7 +107,11 @@ const Profile = () => {
     <div className="text-[var(--role-text)]">
       <div className="page-header">
         <h1 className="page-title">My Profile</h1>
-        <p className="page-subtitle">Update your display name and department assignment so your request flow stays aligned.</p>
+        <p className="page-subtitle">
+          {user.role === 'vp' || user.role === 'president' 
+            ? 'Update your display name for approval authority records.'
+            : 'Update your display name and department assignment so your request flow stays aligned.'}
+        </p>
       </div>
 
       <div className="panel max-w-3xl">
@@ -112,18 +122,29 @@ const Profile = () => {
             <p className="mt-2 text-sm text-[var(--role-text)]/75">{user.email}</p>
           </div>
           <div className="panel-muted">
-            <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/60">Department Update</p>
-            <p className="mt-3 text-sm text-[var(--role-text)]/80">Any change here will affect which department requests you see and submit under.</p>
+            <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/60">
+              {user.role === 'vp' || user.role === 'president' ? 'Approval Authority' : 'Department Update'}
+            </p>
+            <p className="mt-3 text-sm text-[var(--role-text)]/80">
+              {user.role === 'vp' 
+                ? 'You can approve requests up to ₱500,000 (and equivalent in other currencies).'
+                : user.role === 'president'
+                ? 'You can approve requests above ₱500,000 (and equivalent in other currencies).'
+                : 'Any change here will affect which department requests you see and submit under.'}
+            </p>
           </div>
         </div>
 
         <div className="mt-6 space-y-5">
-          <div className="rounded-[24px] border border-[#8FB3E2]/10 bg-[#192338]/28 p-4">
-            <p className="text-sm font-semibold text-[var(--role-text)]">Department Change Notice</p>
-            <p className="mt-2 text-sm text-[var(--role-text)]/90">
-              Changing department will also move your existing requests to the new department.
-            </p>
-          </div>
+          {/* Only show department notice for roles with departments */}
+          {user.role !== 'vp' && user.role !== 'president' && user.role !== 'super_admin' && (
+            <div className="rounded-[24px] border border-[#8FB3E2]/10 bg-[#192338]/28 p-4">
+              <p className="text-sm font-semibold text-[var(--role-text)]">Department Change Notice</p>
+              <p className="mt-2 text-sm text-[var(--role-text)]/90">
+                Changing department will also move your existing requests to the new department.
+              </p>
+            </div>
+          )}
 
           <div>
             <label className="field-label">Full Name</label>
@@ -135,28 +156,31 @@ const Profile = () => {
             />
           </div>
 
-          <div>
-            <label className="field-label">Department</label>
-            <select 
-              className="field-input" 
-              value={departmentId} 
-              onChange={(event) => setDepartmentId(event.target.value)}
-              disabled={isLoadingDepartments}
-            >
-              <option value="">{isLoadingDepartments ? 'Loading departments...' : 'Select your department'}</option>
-              {departments.map((department) => (
-                <option key={department.id} value={department.id}>
-                  {department.name}
-                </option>
-              ))}
-            </select>
-            {user?.department?.name && (
-              <p className="mt-2 text-xs text-[var(--role-text)]/60">
-                Current department: <span className="font-medium">{user.department.name}</span>. 
-                You can only view and create requests for your assigned department.
-              </p>
-            )}
-          </div>
+          {/* Only show department field for roles that have departments */}
+          {user.role !== 'vp' && user.role !== 'president' && user.role !== 'super_admin' && (
+            <div>
+              <label className="field-label">Department</label>
+              <select 
+                className="field-input" 
+                value={departmentId} 
+                onChange={(event) => setDepartmentId(event.target.value)}
+                disabled={isLoadingDepartments}
+              >
+                <option value="">{isLoadingDepartments ? 'Loading departments...' : 'Select your department'}</option>
+                {departments.map((department) => (
+                  <option key={department.id} value={department.id}>
+                    {department.name}
+                  </option>
+                ))}
+              </select>
+              {user?.department?.name && (
+                <p className="mt-2 text-xs text-[var(--role-text)]/60">
+                  Current department: <span className="font-medium">{user.department.name}</span>. 
+                  You can only view and create requests for your assigned department.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-3">
             <button className="btn-primary" onClick={handleSave} disabled={isSaving}>

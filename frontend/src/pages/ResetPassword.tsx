@@ -2,6 +2,7 @@ import { FormEvent, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import toast, { Toaster } from 'react-hot-toast';
 import api from '../api';
+import { getErrorMessage } from '../utils/format';
 
 const ResetPassword = () => {
   const [searchParams] = useSearchParams();
@@ -37,7 +38,7 @@ const ResetPassword = () => {
       toast.success(res.data.message || 'Password reset successful');
       navigate('/login');
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to reset password');
+      toast.error(getErrorMessage(err, 'Failed to reset password'));
     } finally {
       setIsSubmitting(false);
     }

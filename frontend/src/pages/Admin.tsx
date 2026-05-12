@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import toast from 'react-hot-toast';
 import Modal from '../components/Modal';
+import { supabase } from '../lib/supabase';
 import { 
   formatMoney, 
   formatDateTime, 
@@ -104,6 +106,7 @@ const getErrorMessage = (err: any, fallback: string) => {
 };
 
 const Admin = () => {
+  const navigate = useNavigate();
   const [departments, setDepartments] = useState<any[]>([]);
   const [managedUsers, setManagedUsers] = useState<any[]>([]);
   const [userSearchQuery, setUserSearchQuery] = useState('');
@@ -292,8 +295,34 @@ const Admin = () => {
       fetchExchangeRate(false);
     }, 60000);
 
-    return () => window.clearInterval(fxIntervalId);
-  }, []);
+    // Real-time subscriptions for budget changes
+    let budgetChannel: any;
+    if (supabase) {
+      budgetChannel = supabase
+        .channel('budget-realtime')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'departments' }, () => {
+          // Auto-refresh when department budgets change
+          fetchDepartments(false);
+          if (selectedDepartmentId) {
+            fetchDepartmentBreakdown(selectedDepartmentId, false, false);
+          }
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'budget_categories' }, () => {
+          // Auto-refresh when category budgets change
+          if (selectedDepartmentId) {
+            fetchDepartmentBreakdown(selectedDepartmentId, false, false);
+          }
+        })
+        .subscribe();
+    }
+
+    return () => {
+      window.clearInterval(fxIntervalId);
+      if (budgetChannel && supabase) {
+        supabase.removeChannel(budgetChannel);
+      }
+    };
+  }, [selectedDepartmentId]);
 
   useEffect(() => {
     if (user?.role === 'super_admin') {
@@ -334,6 +363,9 @@ const Admin = () => {
     try {
       const res = await api.get('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } });
       setUser(res.data);
+      if (res.data?.role === 'accounting') {
+        navigate('/budget-management', { replace: true });
+      }
     } catch (err) {
       toast.error('Failed to fetch user info');
     }
@@ -507,76 +539,20 @@ const Admin = () => {
         { category_code: '6041', category_name: 'Realized Forex Gain/Loss', budget_amount: 0 },
         { category_code: '6240', category_name: 'Depreciation Expense', budget_amount: 0 },
         { category_code: '6340', category_name: 'Interest Expense', budget_amount: 0 },
-        { category_code: '9900', category_name: 'Sundry & Misc', budget_amount: 0 },
-        { category_code: '6350', category_name: 'Taxes & Licenses', budget_amount: 0 },
-        { category_code: '6351', category_name: 'Taxes & Licenses - Business Tax/Licenses', budget_amount: 0 },
-        { category_code: '6352', category_name: 'Taxes & Licenses - Income Tax', budget_amount: 0 },
+        { category_code: '6351', category_name: 'Taxes & Licenses - Business', budget_amount: 0 },
+        { category_code: '6352', category_name: 'Taxes & Licenses - Income', budget_amount: 0 },
+        { category_code: '9900', category_name: 'Sundry', budget_amount: 0 },
       ];
     }
     
     if (name.includes('admin')) {
       return [
-        { category_code: '6021', category_name: 'Automobile Expense - Automobile Fuel', budget_amount: 0 },
-        { category_code: '6022', category_name: 'Automobile Expense - Parking Fee', budget_amount: 0 },
-        { category_code: '6023', category_name: 'Automobile Expense - Toll Expense', budget_amount: 0 },
-        { category_code: '6024', category_name: 'Automobile Expense - Automobile Repairs', budget_amount: 0 },
-        { category_code: '6026', category_name: 'Automobile Expense - Car Insurance', budget_amount: 0 },
-        { category_code: '6020', category_name: 'Automobile Expense - Automobile Registration', budget_amount: 0 },
+        { category_code: '6020', category_name: 'Automobile Expense', budget_amount: 0 },
         { category_code: '6330', category_name: 'Insurance Expense', budget_amount: 0 },
         { category_code: '6650', category_name: 'Postage and Delivery', budget_amount: 0 },
-        { category_code: '6711', category_name: 'Rent Expense - Office Rent Expense', budget_amount: 0 },
+        { category_code: '6711', category_name: 'Rent Expense', budget_amount: 0 },
         { category_code: '6720', category_name: 'Repairs and Maintenance', budget_amount: 0 },
-        { category_code: '6861', category_name: 'Utilities - Electricity', budget_amount: 0 },
-        { category_code: '6811', category_name: 'Utilities - Globe', budget_amount: 0 },
-        { category_code: '6812', category_name: 'Utilities - Smart Bills', budget_amount: 0 },
-        { category_code: '6813', category_name: 'Utilities - PLDT Telephone', budget_amount: 0 },
-        { category_code: '6814', category_name: 'Utilities - Internet Subscription', budget_amount: 0 },
-        { category_code: '6860', category_name: 'Utilities - Utilities Others (Aircon etc)', budget_amount: 0 },
-      ];
-    }
-    
-    if (name.includes('hr') || name.includes('human')) {
-      return [
-        // 6010 · Advertising and Promotion
-        { category_code: '6011', category_name: 'Advertising and Promotion - Zoom', budget_amount: 0 },
-        { category_code: '6012', category_name: 'Advertising and Promotion - LinkedIn', budget_amount: 0 },
-        { category_code: '6010', category_name: 'Advertising and Promotion - Other', budget_amount: 0 },
-        // 6430 · Meals and Entertainment
-        { category_code: '6431', category_name: 'Meals and Entertainment - Birthday Celebrations', budget_amount: 0 },
-        { category_code: '6432', category_name: 'Meals and Entertainment - Training Meal', budget_amount: 0 },
-        { category_code: '6435', category_name: "Meals and Entertainment - Valentine's Day Celebration", budget_amount: 0 },
-        { category_code: '6437', category_name: 'Meals and Entertainment - Representation', budget_amount: 0 },
-        { category_code: '6430', category_name: 'Meals and Entertainment - Other', budget_amount: 0 },
-        // 6490 · Office Supplies
-        { category_code: '6491', category_name: 'Office Supplies - Stationery & Supplies', budget_amount: 0 },
-        { category_code: '6492', category_name: 'Office Supplies - Consumable & Pantry/Cleaning', budget_amount: 0 },
-        { category_code: '6493', category_name: 'Office Supplies - Tools & Equipment', budget_amount: 0 },
-        { category_code: '6494', category_name: 'Office Supplies - Fire Extinguisher', budget_amount: 0 },
-        { category_code: '6490', category_name: 'Office Supplies - Other (Furnitures)', budget_amount: 0 },
-        // 6500 · Medical Records and Supplies
-        { category_code: '6501', category_name: 'Medical Expenses', budget_amount: 0 },
-        // 6670 · Professional Fees
-        { category_code: '6670', category_name: 'Professional Fees - Other', budget_amount: 0 },
-        { category_code: '6678', category_name: 'Professional Fees - BIR Compliance Service', budget_amount: 0 },
-        { category_code: '6680', category_name: 'Professional Fees - DOLE Establishment Report & 13th', budget_amount: 0 },
-        { category_code: '6681', category_name: 'Professional Fees - Filing of Annual GIS', budget_amount: 0 },
-        { category_code: '6682', category_name: 'Professional Fees - Fire Safety Inspection Certificate', budget_amount: 0 },
-        { category_code: '6685', category_name: 'Professional Fees - Nominee Directors Service', budget_amount: 0 },
-        { category_code: '6686', category_name: 'Professional Fees - Notarization Fee', budget_amount: 0 },
-        { category_code: '6690', category_name: 'Professional Fees - Posted Transactions', budget_amount: 0 },
-        { category_code: '6691', category_name: 'Professional Fees - Posted Transactions Adjustment', budget_amount: 0 },
-        // 6840 · Travel Expense
-        { category_code: '6845', category_name: 'Travel Expense - Foreign Travel-Airline', budget_amount: 0 },
-        { category_code: '6846', category_name: 'Travel Expense - Foreign Travel-Hotel', budget_amount: 0 },
-        { category_code: '6847', category_name: 'Travel Expense - Local Travel-Airline', budget_amount: 0 },
-        { category_code: '6848', category_name: 'Travel Expense - Local Travel-Hotel', budget_amount: 0 },
-        { category_code: '6840', category_name: 'Travel Expense - Other', budget_amount: 0 },
-        { category_code: '6849', category_name: 'Travel Expense - Indo Representative', budget_amount: 0 },
-        // 6900 · Welfare - Employee
-        { category_code: '6901', category_name: 'Welfare - Employee - Seminar', budget_amount: 0 },
-        { category_code: '6902', category_name: 'Welfare - Employee - HMO Expenses', budget_amount: 0 },
-        { category_code: '6906', category_name: 'Welfare - Employee - Uniform', budget_amount: 0 },
-        { category_code: '6907', category_name: 'Welfare - Employee - Staff Welfare', budget_amount: 0 },
+        { category_code: '6860', category_name: 'Utilities (Electricity/Water/Comm)', budget_amount: 0 },
       ];
     }
     
@@ -585,20 +561,37 @@ const Admin = () => {
         { category_code: '6170', category_name: 'Computer and Internet Expenses', budget_amount: 0 },
       ];
     }
-    
-    if (name.includes('sales')) {
+
+    if (name.includes('hr') || name.includes('human')) {
       return [
-        { category_code: '4790', category_name: 'Sales', budget_amount: 0 },
+        { category_code: '6010', category_name: 'Advertising and Promotion', budget_amount: 0 },
+        { category_code: '6430', category_name: 'Meals and Entertainment', budget_amount: 0 },
+        { category_code: '6490', category_name: 'Office Supplies', budget_amount: 0 },
+        { category_code: '6501', category_name: 'Medical Expenses', budget_amount: 0 },
+        { category_code: '6670', category_name: 'Professional Fees', budget_amount: 0 },
+        { category_code: '6840', category_name: 'Travel Expense', budget_amount: 0 },
+        { category_code: '6900', category_name: 'Welfare - Employee', budget_amount: 0 },
+      ];
+    }
+
+    if (name.includes('purchasing')) {
+      return [
+        { category_code: 'PUR001', category_name: 'Vendor Management', budget_amount: 0 },
+        { category_code: 'PUR002', category_name: 'Procurement Costs', budget_amount: 0 },
+      ];
+    }
+
+    if (name.includes('logistics')) {
+      return [
+        { category_code: 'LOG001', category_name: 'Freight & Delivery', budget_amount: 0 },
+        { category_code: 'LOG002', category_name: 'Warehouse Supplies', budget_amount: 0 },
       ];
     }
     
-    // Cost of Goods Sold (Payroll) - for all departments
     return [
       { category_code: '66001', category_name: 'Payroll Expense - Executive', budget_amount: 0 },
       { category_code: '66002', category_name: 'Payroll Expense - Accounting', budget_amount: 0 },
-      { category_code: '66008', category_name: 'Payroll Expense - I.T.', budget_amount: 0 },
-      { category_code: '66012', category_name: 'Phil. Health Insurance', budget_amount: 0 },
-      { category_code: '6606', category_name: 'Social Security Company', budget_amount: 0 },
+      { category_code: 'MISC', category_name: 'Miscellaneous Expense', budget_amount: 0 },
     ];
   };
 
@@ -609,27 +602,30 @@ const Admin = () => {
       return;
     }
     
+    if (!confirm('This will remove ALL current categories and reset to the standard department defaults. Continue?')) {
+      return;
+    }
+    
     const defaultCategories = getDepartmentCategories(selectedDepartment.name);
     
     try {
-      toast.loading(`Initializing ${defaultCategories.length} categories...`, { id: 'init-cats' });
+      toast.loading(`Resetting to ${defaultCategories.length} standard categories...`, { id: 'init-cats' });
       
-      // Get existing categories for this department
+      // 1. Get existing categories for this department
       const existingRes = await api.get(`/api/budget/categories?department_id=${selectedDepartmentId}&fiscal_year=${selectedFiscalYear}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const existingCodes = new Set((existingRes.data || []).map((c: any) => c.category_code));
       
-      // Only create categories that don't already exist
-      const newCategories = defaultCategories.filter(cat => !existingCodes.has(cat.category_code));
-      
-      if (newCategories.length === 0) {
-        toast.success('All categories already exist!', { id: 'init-cats' });
-        await fetchDepartmentBreakdown(selectedDepartmentId, false, false);
-        return;
+      // 2. Delete all existing
+      if (existingRes.data && existingRes.data.length > 0) {
+        const deletePromises = existingRes.data.map((cat: any) => 
+          api.delete(`/api/budget/categories/${cat.id}`, { headers: { Authorization: `Bearer ${token}` } })
+        );
+        await Promise.all(deletePromises);
       }
       
-      const promises = newCategories.map(cat => 
+      // 3. Create all defaults
+      const createPromises = defaultCategories.map(cat => 
         api.post('/api/budget/categories', {
           department_id: selectedDepartmentId,
           fiscal_year: selectedFiscalYear,
@@ -638,12 +634,13 @@ const Admin = () => {
           budget_amount: cat.budget_amount
         }, { headers: { Authorization: `Bearer ${token}` } })
       );
-      await Promise.all(promises);
-      toast.success(`${newCategories.length} new categories added!`, { id: 'init-cats' });
+      await Promise.all(createPromises);
+      
+      toast.success('Department categories have been reset!', { id: 'init-cats' });
       await fetchDepartmentBreakdown(selectedDepartmentId, false, false);
       await fetchDepartments(false); // Refresh to update Current Total
     } catch (err: any) {
-      toast.error(getErrorMessage(err, 'Failed to initialize categories'), { id: 'init-cats' });
+      toast.error(getErrorMessage(err, 'Failed to reset categories'), { id: 'init-cats' });
     }
   };
 
@@ -894,12 +891,12 @@ const Admin = () => {
     }
   ];
 
-  if (user?.role === 'super_admin') {
+  if (user?.role === 'super_admin' || user?.role === 'admin') {
     return (
       <>
         <div className="text-[var(--role-text)]">
           <div className="page-header">
-            <h1 className="page-title">Super Admin Console</h1>
+            <h1 className="page-title">Admin Console</h1>
             <p className="page-subtitle">Manage user access and review the latest system audit activity.</p>
           </div>
 
@@ -974,16 +971,16 @@ const Admin = () => {
                         <option value="employee">Employee</option>
                         <option value="manager">Manager</option>
                         <option value="supervisor">Supervisor</option>
+                        <option value="vp">Vice President</option>
+                        <option value="president">President</option>
                         <option value="accounting">Accounting</option>
-                        <option value="management">Management</option>
                         <option value="admin">Admin</option>
-                        <option value="super_admin">Super Admin</option>
                       </select>
                       <select
                         className="field-input border-[var(--role-primary)]/30 focus:border-[var(--role-primary)] font-medium"
                         value={managedUser.department_id || ''}
                         onChange={(e) => setManagedUsers((current) => current.map((entry) => entry.id === managedUser.id ? { ...entry, department_id: e.target.value } : entry))}
-                        disabled={managedUser.role === 'super_admin'}
+                        disabled={managedUser.role === 'super_admin' || managedUser.role === 'vp' || managedUser.role === 'president'}
                       >
                         <option value="">No Department</option>
                         {groupedDepartments.map((group) => (
@@ -1161,6 +1158,8 @@ const Admin = () => {
     );
   }
 
+  return null;
+// unreachable — kept for reference only
 return (
     <div className="text-[var(--role-text)]">
       <div className="page-header">
@@ -1555,12 +1554,12 @@ return (
                   <p className="mt-2 text-sm text-[var(--role-text)]/70">{secondaryMoney(breakdownTotals.annual_budget)}</p>
                 </div>
                 <div className="rounded-[24px] border border-[var(--role-border)] bg-[var(--role-accent)] p-5">
-                  <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/60">Used Budget</p>
+                  <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/60">Utilized Budget</p>
                   <p className="mt-3 break-words text-2xl font-bold leading-tight text-[var(--role-text)]">{displayMoney(breakdownTotals.used_budget)}</p>
                   <p className="mt-2 text-sm text-[var(--role-text)]/70">{secondaryMoney(breakdownTotals.used_budget)}</p>
                 </div>
                 <div className="rounded-[24px] border border-[var(--role-border)] bg-[var(--role-accent)] p-5">
-                  <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/60">Remaining Budget</p>
+                  <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/60">Available Budget</p>
                   <p className="mt-3 break-words text-2xl font-bold leading-tight text-[var(--role-text)]">{displayMoney(breakdownDepartment.remaining_budget)}</p>
                   <p className="mt-2 text-sm text-[var(--role-text)]/70">{secondaryMoney(breakdownDepartment.remaining_budget)}</p>
                 </div>
@@ -1586,7 +1585,7 @@ return (
 
                     <div className="mt-5 grid grid-cols-1 gap-3 2xl:grid-cols-2">
                       <div className="rounded-2xl border border-[var(--role-border)] bg-[var(--role-surface)] p-4">
-                        <p className="text-sm text-[var(--role-text)]/70">Released Requests</p>
+                        <p className="text-sm text-[var(--role-text)]/70">Disbursed Requests</p>
                         <p className="mt-2 break-words text-2xl font-semibold leading-tight text-[var(--role-text)]">{displayMoney(breakdownTotals.released_requests_total)}</p>
                         <p className="text-sm text-[var(--role-text)]/60">{secondaryMoney(breakdownTotals.released_requests_total)}</p>
                       </div>
@@ -2057,7 +2056,7 @@ return (
                         <p className="mt-2 text-2xl font-bold text-[var(--role-text)]">{breakdownCounts.total_requests}</p>
                       </div>
                       <div className="rounded-2xl border border-[var(--role-border)] bg-[var(--role-surface)] p-4">
-                        <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--role-text)]/60">Released</p>
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--role-text)]/60">Disbursed</p>
                         <p className="mt-2 text-2xl font-bold text-[var(--role-text)]">{breakdownCounts.released_requests}</p>
                       </div>
                       <div className="rounded-2xl border border-[var(--role-border)] bg-[var(--role-surface)] p-4">

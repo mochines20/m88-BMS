@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { getErrorMessage } from '../utils/format';
 
 type AuthMode = 'signin' | 'signup';
 
@@ -79,7 +80,7 @@ const Login = () => {
           const fallbackDepartments = getFallbackDepartments();
           setDepartments(fallbackDepartments);
           setDepartmentId((current) => current || fallbackDepartments[0]?.id || '');
-          toast.error(err.response?.data?.error || 'Failed to load departments from the server. Showing default departments instead.');
+          toast.error(getErrorMessage(err, 'Failed to load departments from the server. Showing default departments instead.'));
         }
       } finally {
         if (isMounted) {
@@ -130,7 +131,7 @@ const Login = () => {
       toast.success(res.data.message || 'If the email is registered, a reset link has been sent.');
       setShowForgotPassword(false);
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to send reset link');
+      toast.error(getErrorMessage(err, 'Failed to send reset link'));
     } finally {
       setIsSendingReset(false);
     }
@@ -146,7 +147,7 @@ const Login = () => {
       await new Promise((resolve) => setTimeout(resolve, 450));
       navigate('/');
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Login failed');
+      toast.error(getErrorMessage(err, 'Login failed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -196,7 +197,7 @@ const Login = () => {
       await new Promise((resolve) => setTimeout(resolve, 450));
       navigate('/');
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Sign up failed');
+      toast.error(getErrorMessage(err, 'Sign up failed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -235,7 +236,7 @@ const Login = () => {
           <img
             src="/madison88-logo.png"
             alt="Madison88"
-            className="h-16 w-auto rounded-2xl border border-[var(--role-border)] bg-[#f8fbff] px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.08)]"
+            className="h-16 w-auto rounded-2xl border border-[var(--role-border)] bg-[var(--bms-bg-2)] px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.3)]"
             />
           <h1 className="mt-6 max-w-lg text-5xl font-bold leading-tight text-[var(--role-text)]">
             Streamline budget requests, approvals, and reporting in one secure workspace.
@@ -279,7 +280,7 @@ const Login = () => {
             <img
               src="/madison88-logo.png"
               alt="Madison88"
-              className="mx-auto mb-5 h-14 w-auto rounded-2xl border border-[var(--role-border)] bg-white px-4 py-3 shadow-[0_8px_24px_rgba(0,0,0,0.06)]"
+              className="mx-auto mb-5 h-14 w-auto rounded-2xl border border-[var(--role-border)] bg-[var(--bms-bg-2)] px-4 py-3 shadow-[0_8px_24px_rgba(0,0,0,0.3)]"
             />
             <div className="mx-auto mb-5 inline-flex rounded-full border border-[var(--role-border)] bg-[var(--role-accent)] p-1">
               <button
@@ -358,29 +359,32 @@ const Login = () => {
               </>
             )}
 
-            <div className="relative">
-              <label className="field-label">Email</label>
+            {/* Email field only for signin mode */}
+            {mode !== 'signup' && (
               <div className="relative">
-                <input
-                  type="email"
-                  placeholder={`admin@${COMPANY_EMAIL_DOMAIN}`}
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    if (!forgotEmail) {
-                      setForgotEmail(e.target.value);
-                    }
-                  }}
-                  className="field-input pr-12"
-                  required
-                />
-                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4">
-                  <svg className="h-5 w-5 text-[var(--role-text)]/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
-                  </svg>
+                <label className="field-label">Email</label>
+                <div className="relative">
+                  <input
+                    type="email"
+                    placeholder={`admin@${COMPANY_EMAIL_DOMAIN}`}
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (!forgotEmail) {
+                        setForgotEmail(e.target.value);
+                      }
+                    }}
+                    className="field-input pr-12"
+                    required
+                  />
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4">
+                    <svg className="h-5 w-5 text-[var(--role-text)]/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 12a4 4 0 10-8 0 4 4 0 008 0zm0 0v1.5a2.5 2.5 0 005 0V12a9 9 0 10-9 9m4.5-1.206a8.959 8.959 0 01-4.5 1.207" />
+                    </svg>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             <div>
               <div className="mb-2 flex items-center justify-between">

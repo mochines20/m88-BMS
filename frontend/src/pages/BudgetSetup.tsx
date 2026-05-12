@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import toast from 'react-hot-toast';
-import { formatMoney, toNumber } from '../utils/format';
+import { formatMoney, toNumber , getErrorMessage } from '../utils/format';
 
 interface Department {
   id: string;
@@ -25,171 +25,96 @@ const BudgetSetup = () => {
   const [categories, setCategories] = useState<BudgetCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletedCategoryIds, setDeletedCategoryIds] = useState<string[]>([]);
 
-  const defaultCategories = [
-    // ==========================================
-    // SALES
-    // ==========================================
-    { category_code: '4790', category_name: 'Sales', budget_amount: 0 },
-    
-    // ==========================================
-    // COST OF GOODS SOLD - Payroll
-    // ==========================================
-    { category_code: '66001', category_name: 'Payroll Expense Executive', budget_amount: 0 },
-    { category_code: '66002', category_name: 'Payroll Expense Accounting', budget_amount: 0 },
-    { category_code: '66003', category_name: 'Payroll Expense H.R.', budget_amount: 0 },
-    { category_code: '66004', category_name: 'Payroll Expense Logistics', budget_amount: 0 },
-    { category_code: '66005', category_name: 'Payroll Expense Planning', budget_amount: 0 },
-    { category_code: '66006', category_name: 'Payroll Expense Purchasing', budget_amount: 0 },
-    { category_code: '66007', category_name: 'Payroll Expense Costing', budget_amount: 0 },
-    { category_code: '66008', category_name: 'Payroll Expense I.T.', budget_amount: 0 },
-    { category_code: '66009', category_name: 'Payroll Expense OJT', budget_amount: 0 },
-    { category_code: '660010', category_name: 'Payroll Expense Supply Chain', budget_amount: 0 },
-    { category_code: '66012', category_name: 'Phil. Health Insurance', budget_amount: 0 },
-    { category_code: '66017', category_name: 'Home Development Company', budget_amount: 0 },
-    { category_code: '6606', category_name: 'Social Security Company', budget_amount: 0 },
-    
-    // ==========================================
-    // HR → 6010 · Advertising and Promotion
-    // ==========================================
-    { category_code: '6010', category_name: 'Advertising and Promotion', budget_amount: 0 },
-    { category_code: '6011', category_name: 'Zoom', budget_amount: 0 },
-    { category_code: '6012', category_name: 'LinkedIn', budget_amount: 0 },
-    
-    // ==========================================
-    // HR → 6430 · Meals and Entertainment
-    // ==========================================
-    { category_code: '6430', category_name: 'Meals and Entertainment - Other', budget_amount: 0 },
-    { category_code: '6431', category_name: 'Birthday Celebrations', budget_amount: 0 },
-    { category_code: '6432', category_name: 'Training Meal', budget_amount: 0 },
-    { category_code: '6435', category_name: 'Valentine\'s Day Celebration', budget_amount: 0 },
-    { category_code: '6437', category_name: 'Representation', budget_amount: 0 },
-    
-    // ==========================================
-    // HR → 6490 · Office Supplies
-    // ==========================================
-    { category_code: '6490', category_name: 'Office Supplies Other (Furnitures)', budget_amount: 0 },
-    { category_code: '6491', category_name: 'Office Stationery & Supplies', budget_amount: 0 },
-    { category_code: '6492', category_name: 'Consumable & Pantry/Cleaning Supplies', budget_amount: 0 },
-    { category_code: '6493', category_name: 'Tools & Equipment', budget_amount: 0 },
-    { category_code: '6494', category_name: 'Fire Extinguisher', budget_amount: 0 },
-    
-    // ==========================================
-    // HR → 6500 · Medical Records and Supplies
-    // ==========================================
-    { category_code: '6500', category_name: 'Medical Records and Supplies', budget_amount: 0 },
-    { category_code: '6501', category_name: 'Medical Expenses', budget_amount: 0 },
-    
-    // ==========================================
-    // HR → 6670 · Professional Fees
-    // ==========================================
-    { category_code: '6670', category_name: 'Professional Fees - Other', budget_amount: 0 },
-    { category_code: '6678', category_name: 'BIR Compliance Service', budget_amount: 0 },
-    { category_code: '6680', category_name: 'DOLE Establishment Report & 13th', budget_amount: 0 },
-    { category_code: '6681', category_name: 'Filing of Annual GIS', budget_amount: 0 },
-    { category_code: '6682', category_name: 'Fire Safety Inspection Certificate', budget_amount: 0 },
-    { category_code: '6685', category_name: 'Nominee Directors Service', budget_amount: 0 },
-    { category_code: '6686', category_name: 'Notarization Fee', budget_amount: 0 },
-    { category_code: '6690', category_name: 'Posted Transactions', budget_amount: 0 },
-    { category_code: '6691', category_name: 'Posted Transactions Adjustment', budget_amount: 0 },
-    
-    // ==========================================
-    // HR → 6840 · Travel Expense
-    // ==========================================
-    { category_code: '6840', category_name: 'Travel Expense - Other', budget_amount: 0 },
-    { category_code: '6845', category_name: 'Foreign Travel-Airline Expenses', budget_amount: 0 },
-    { category_code: '6846', category_name: 'Foreign Travel-Hotel', budget_amount: 0 },
-    { category_code: '6847', category_name: 'Local Travel-Airline Expenses', budget_amount: 0 },
-    { category_code: '6848', category_name: 'Local Travel-Hotel', budget_amount: 0 },
-    { category_code: '6849', category_name: 'Travel Expenses - Indo Representative', budget_amount: 0 },
-    
-    // ==========================================
-    // HR → 6900 · Welfare - Employee
-    // ==========================================
-    { category_code: '6900', category_name: 'Welfare - Employee', budget_amount: 0 },
-    { category_code: '6901', category_name: 'Seminar', budget_amount: 0 },
-    { category_code: '6902', category_name: 'HMO Expenses', budget_amount: 0 },
-    { category_code: '6906', category_name: 'Uniform', budget_amount: 0 },
-    { category_code: '6907', category_name: 'Staff Welfare', budget_amount: 0 },
-    
-    // ==========================================
-    // Admin → 6020 · Automobile Expense
-    // ==========================================
-    { category_code: '6020', category_name: 'Automobile Expenses-Registration', budget_amount: 0 },
-    { category_code: '6021', category_name: 'Automobile Fuel', budget_amount: 0 },
-    { category_code: '6022', category_name: 'Parking Fee', budget_amount: 0 },
-    { category_code: '6023', category_name: 'Toll Expense', budget_amount: 0 },
-    { category_code: '6024', category_name: 'Automobile Repairs', budget_amount: 0 },
-    { category_code: '6026', category_name: 'Car Insurance', budget_amount: 0 },
-    
-    // ==========================================
-    // Admin → 6330 · Insurance Expense
-    // ==========================================
-    { category_code: '6330', category_name: 'Insurance Expense', budget_amount: 0 },
-    
-    // ==========================================
-    // Admin → 6650 · Postage and Delivery
-    // ==========================================
-    { category_code: '6650', category_name: 'Postage and Delivery', budget_amount: 0 },
-    
-    // ==========================================
-    // Admin → 6710 · Rent Expense
-    // ==========================================
-    { category_code: '6710', category_name: 'Rent Expense', budget_amount: 0 },
-    { category_code: '6711', category_name: 'Office Rent Expense', budget_amount: 0 },
-    
-    // ==========================================
-    // Admin → 6720 · Repairs and Maintenance
-    // ==========================================
-    { category_code: '6720', category_name: 'Repairs and Maintenance', budget_amount: 0 },
-    
-    // ==========================================
-    // Admin → 6860 · Utilities
-    // ==========================================
-    { category_code: '6860', category_name: 'Utilities Others (Aircon etc)', budget_amount: 0 },
-    { category_code: '6861', category_name: 'Electricity', budget_amount: 0 },
-    { category_code: '6811', category_name: 'Globe', budget_amount: 0 },
-    { category_code: '6812', category_name: 'Smart Bills', budget_amount: 0 },
-    { category_code: '6813', category_name: 'PLDT Telephone', budget_amount: 0 },
-    { category_code: '6814', category_name: 'Internet Subscription', budget_amount: 0 },
-    
-    // ==========================================
-    // Accounting → 6040 · Bank Service Charges
-    // ==========================================
-    { category_code: '6040', category_name: 'Bank Service Charges', budget_amount: 0 },
-    
-    // ==========================================
-    // Accounting → 6041 · Realized Forex Gain/Loss
-    // ==========================================
-    { category_code: '6041', category_name: 'Realized Forex Gain/Loss', budget_amount: 0 },
-    
-    // ==========================================
-    // Accounting → 6240 · Depreciation Expense
-    // ==========================================
-    { category_code: '6240', category_name: 'Depreciation Expense', budget_amount: 0 },
-    
-    // ==========================================
-    // Accounting → 6340 · Interest Expense
-    // ==========================================
-    { category_code: '6340', category_name: 'Interest Expense', budget_amount: 0 },
-    
-    // ==========================================
-    // Accounting → 9900 · Sundry
-    // ==========================================
-    { category_code: '9900', category_name: 'Sundry & Misc', budget_amount: 0 },
-    
-    // ==========================================
-    // Accounting → 6350 · Taxes & Licenses
-    // ==========================================
-    { category_code: '6350', category_name: 'Taxes & Licenses', budget_amount: 0 },
-    { category_code: '6351', category_name: 'Business Tax/Licenses', budget_amount: 0 },
-    { category_code: '6352', category_name: 'Income Tax', budget_amount: 0 },
-    
-    // ==========================================
-    // IT → 6170 · Computer and Internet Expenses
-    // ==========================================
-    { category_code: '6170', category_name: 'Computer and Internet Expenses', budget_amount: 0 }
-  ];
+  const DEPARTMENT_DEFAULTS: Record<string, BudgetCategory[]> = {
+    'Accounting': [
+      { category_code: '6040', category_name: 'Bank Service Charges', budget_amount: 0 },
+      { category_code: '6041', category_name: 'Realized Forex Gain/Loss', budget_amount: 0 },
+      { category_code: '6240', category_name: 'Depreciation Expense', budget_amount: 0 },
+      { category_code: '6340', category_name: 'Interest Expense', budget_amount: 0 },
+      { category_code: '6351', category_name: 'Taxes & Licenses (6351)', budget_amount: 0 },
+      { category_code: '6352', category_name: 'Taxes & Licenses (6352)', budget_amount: 0 },
+      { category_code: '9900', category_name: 'Sundry', budget_amount: 0 },
+    ],
+    'Finance': [
+      { category_code: '6040', category_name: 'Bank Service Charges', budget_amount: 0 },
+      { category_code: '6041', category_name: 'Realized Forex Gain/Loss', budget_amount: 0 },
+      { category_code: '6240', category_name: 'Depreciation Expense', budget_amount: 0 },
+      { category_code: '6340', category_name: 'Interest Expense', budget_amount: 0 },
+      { category_code: '6351', category_name: 'Taxes & Licenses (6351)', budget_amount: 0 },
+      { category_code: '6352', category_name: 'Taxes & Licenses (6352)', budget_amount: 0 },
+      { category_code: '9900', category_name: 'Sundry', budget_amount: 0 },
+    ],
+    'Admin': [
+      { category_code: '6020', category_name: 'Automobile Expense (6020)', budget_amount: 0 },
+      { category_code: '6021', category_name: 'Automobile Expense (6021)', budget_amount: 0 },
+      { category_code: '6022', category_name: 'Automobile Expense (6022)', budget_amount: 0 },
+      { category_code: '6023', category_name: 'Automobile Expense (6023)', budget_amount: 0 },
+      { category_code: '6024', category_name: 'Automobile Expense (6024)', budget_amount: 0 },
+      { category_code: '6026', category_name: 'Automobile Expense (6026)', budget_amount: 0 },
+      { category_code: '6330', category_name: 'Insurance Expense', budget_amount: 0 },
+      { category_code: '6650', category_name: 'Postage and Delivery', budget_amount: 0 },
+      { category_code: '6711', category_name: 'Rent Expense', budget_amount: 0 },
+      { category_code: '6720', category_name: 'Repairs and Maintenance', budget_amount: 0 },
+      { category_code: '6860', category_name: 'Utilities (6860)', budget_amount: 0 },
+      { category_code: '6861', category_name: 'Utilities (6861)', budget_amount: 0 },
+      { category_code: '6811', category_name: 'Utilities (6811)', budget_amount: 0 },
+      { category_code: '6812', category_name: 'Utilities (6812)', budget_amount: 0 },
+      { category_code: '6813', category_name: 'Utilities (6813)', budget_amount: 0 },
+      { category_code: '6814', category_name: 'Utilities (6814)', budget_amount: 0 },
+    ],
+    'Cost of Goods Sold': [
+      { category_code: '66001', category_name: 'Payroll - Executive', budget_amount: 0 },
+      { category_code: '66002', category_name: 'Payroll - Accounting', budget_amount: 0 },
+      { category_code: '66003', category_name: 'Payroll - H.R.', budget_amount: 0 },
+      { category_code: '66004', category_name: 'Payroll - Logistics', budget_amount: 0 },
+      { category_code: '66005', category_name: 'Payroll - Planning', budget_amount: 0 },
+      { category_code: '66006', category_name: 'Payroll - Purchasing', budget_amount: 0 },
+      { category_code: '66007', category_name: 'Payroll - Costing', budget_amount: 0 },
+      { category_code: '66008', category_name: 'Payroll - I.T.', budget_amount: 0 },
+      { category_code: '66009', category_name: 'Payroll - OJT', budget_amount: 0 },
+      { category_code: '660010', category_name: 'Payroll - Supply Chain', budget_amount: 0 },
+      { category_code: '66012', category_name: 'PhilHealth Insurance', budget_amount: 0 },
+      { category_code: '66017', category_name: 'Pag-IBIG (Home Dev\'t)', budget_amount: 0 },
+      { category_code: '6606', category_name: 'SSS (Social Security)', budget_amount: 0 },
+    ],
+    'Logistics': [
+      { category_code: '6020', category_name: 'Logistics - Vehicle Rental', budget_amount: 0 },
+      { category_code: '6021', category_name: 'Logistics - Fuel & Oil', budget_amount: 0 },
+      { category_code: '6650', category_name: 'Freight and Shipping', budget_amount: 0 },
+      { category_code: '6720', category_name: 'Warehouse Repairs', budget_amount: 0 },
+      { category_code: '6860', category_name: 'Warehouse Utilities', budget_amount: 0 },
+    ],
+    'Operations': [
+      { category_code: 'OPS-1', category_name: 'Production Supplies', budget_amount: 0 },
+      { category_code: 'OPS-2', category_name: 'Equipment Maintenance', budget_amount: 0 },
+      { category_code: 'OPS-3', category_name: 'Direct Labor Overtime', budget_amount: 0 },
+    ],
+    'Purchasing': [
+      { category_code: 'PUR-1', category_name: 'Vendor Evaluation Costs', budget_amount: 0 },
+      { category_code: 'PUR-2', category_name: 'Procurement Systems', budget_amount: 0 },
+    ],
+    'Planning': [
+      { category_code: 'PLN-1', category_name: 'Market Research', budget_amount: 0 },
+      { category_code: 'PLN-2', category_name: 'Strategic Consulting', budget_amount: 0 },
+    ],
+    'HR': [
+      { category_code: '6010', category_name: 'Advertising and Promotion (6010)', budget_amount: 0 },
+      { category_code: '6430', category_name: 'Meals and Entertainment (6430)', budget_amount: 0 },
+      { category_code: '6490', category_name: 'Office Supplies (6490)', budget_amount: 0 },
+      { category_code: '6501', category_name: 'Medical Records and Supplies', budget_amount: 0 },
+      { category_code: '6670', category_name: 'Professional Fees (6670)', budget_amount: 0 },
+      { category_code: '6840', category_name: 'Travel Expense (6840)', budget_amount: 0 },
+      { category_code: '6900', category_name: 'Welfare - Employee (6900)', budget_amount: 0 },
+    ],
+    'IT': [
+      { category_code: '6170', category_name: 'Computer and Internet Expenses', budget_amount: 0 },
+    ],
+    'Sales': [
+      { category_code: '4790', category_name: 'Sales Commission & Promo', budget_amount: 0 },
+    ]
+  };
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -236,16 +161,32 @@ const BudgetSetup = () => {
             budget_amount: Number(cat.budget_amount)
           })));
         } else {
-          // Use default categories
-          setCategories(defaultCategories.map(c => ({ ...c })));
+          // Use department-specific default categories
+          const dept = departments.find(d => d.id === selectedDept);
+          const deptName = dept?.name || '';
+
+          // Try exact match, then case-insensitive, then fallback to empty
+          // Try exact match, then fuzzy match (contains), then fallback
+          let defaults: BudgetCategory[] = [];
+          const exactMatch = DEPARTMENT_DEFAULTS[deptName];
+          if (exactMatch) {
+            defaults = exactMatch;
+          } else {
+            const entry = Object.entries(DEPARTMENT_DEFAULTS).find(
+              ([name]) => deptName.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(deptName.toLowerCase())
+            );
+            defaults = entry ? entry[1] : [];
+          }
+
+          setCategories(defaults.map(c => ({ ...c })));
         }
       } catch {
-        setCategories(defaultCategories.map(c => ({ ...c })));
+        setCategories([]);
       }
     };
 
     loadExistingCategories();
-  }, [selectedDept, fiscalYear]);
+  }, [selectedDept, fiscalYear, departments]);
 
   const handleCategoryChange = (index: number, field: keyof BudgetCategory, value: string | number) => {
     setCategories(prev => {
@@ -263,7 +204,42 @@ const BudgetSetup = () => {
   };
 
   const removeCategory = (index: number) => {
+    const category = categories[index];
+    if (category.id) {
+      setDeletedCategoryIds(prev => [...prev, category.id!]);
+    }
     setCategories(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleResetToDefaults = () => {
+    const dept = departments.find(d => d.id === selectedDept);
+    const deptName = dept?.name || '';
+
+    let defaults: BudgetCategory[] = [];
+    const exactMatch = DEPARTMENT_DEFAULTS[deptName];
+    if (exactMatch) {
+      defaults = exactMatch;
+    } else {
+      const entry = Object.entries(DEPARTMENT_DEFAULTS).find(
+        ([name]) => deptName.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(deptName.toLowerCase())
+      );
+      defaults = entry ? entry[1] : [];
+    }
+
+    if (defaults.length === 0) {
+      toast.error(`No standard defaults found for "${deptName}".`);
+      return;
+    }
+
+    if (window.confirm(`Are you sure you want to reset to defaults for ${deptName}? This will mark all current categories for deletion upon saving.`)) {
+      // Mark all existing categories for deletion
+      const currentIds = categories.filter(c => c.id).map(c => c.id!);
+      setDeletedCategoryIds(prev => Array.from(new Set([...prev, ...currentIds])));
+
+      // Load defaults
+      setCategories(defaults.map(c => ({ ...c })));
+      toast.success('Defaults loaded. Click "Save" to apply changes.');
+    }
   };
 
   const totalBudget = categories.reduce((sum, cat) => sum + toNumber(cat.budget_amount), 0);
@@ -273,7 +249,7 @@ const BudgetSetup = () => {
     const invalidCategories = categories.filter(
       cat => !cat.category_code || !cat.category_name || cat.budget_amount < 0
     );
-    
+
     if (invalidCategories.length > 0) {
       toast.error('Please fill in all category codes, names, and valid amounts');
       return;
@@ -284,7 +260,7 @@ const BudgetSetup = () => {
 
     try {
       // For existing categories, update them. For new ones, create them.
-      const promises = categories.map(cat => {
+      const savePromises = categories.map(cat => {
         if (cat.id) {
           // Update existing
           return api.put(`/api/budget/categories/${cat.id}`, {
@@ -307,9 +283,17 @@ const BudgetSetup = () => {
         }
       });
 
-      await Promise.all(promises);
+      // Handle deletions
+      const deletePromises = deletedCategoryIds.map(id =>
+        api.delete(`/api/budget/categories/${id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      );
+
+      await Promise.all([...savePromises, ...deletePromises]);
+      setDeletedCategoryIds([]); // Reset deletions state after successful save
       toast.success('Budget setup saved successfully!');
-      
+
       // Reload categories
       const res = await api.get(`/api/budget/categories?department_id=${selectedDept}&fiscal_year=${fiscalYear}`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -321,7 +305,7 @@ const BudgetSetup = () => {
         budget_amount: Number(cat.budget_amount)
       })));
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to save budget setup');
+      toast.error(getErrorMessage(err, 'Failed to save budget setup'));
     } finally {
       setSaving(false);
     }
@@ -349,7 +333,7 @@ const BudgetSetup = () => {
         {/* Left Panel - Selection */}
         <div className="panel">
           <h2 className="text-lg font-semibold mb-4">Select Department</h2>
-          
+
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-2">Department</label>
@@ -390,7 +374,7 @@ const BudgetSetup = () => {
               </svg>
               Budget Summary
             </h3>
-            
+
             {/* Category Breakdown */}
             <div className="space-y-1 mb-3 max-h-48 overflow-y-auto">
               {categories.map((cat, idx) => (
@@ -405,7 +389,7 @@ const BudgetSetup = () => {
                 <p className="text-sm text-[var(--role-text)]/40 italic py-2">No categories added</p>
               )}
             </div>
-            
+
             {/* Total */}
             <div className="pt-3 border-t border-[var(--role-border)]">
               <div className="flex justify-between items-center">
@@ -431,20 +415,32 @@ const BudgetSetup = () => {
         <div className="panel lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold">Budget Categories</h2>
-            <button
-              onClick={addCategory}
-              className="btn-secondary text-sm flex items-center gap-2"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              Add Category
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handleResetToDefaults}
+                className="btn-secondary text-sm flex items-center gap-2 border-orange-200 text-orange-600 hover:bg-orange-50"
+                title="Reset to department-specific standard categories"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Reset to Defaults
+              </button>
+              <button
+                onClick={addCategory}
+                className="btn-secondary text-sm flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add Category
+              </button>
+            </div>
           </div>
 
           <div className="space-y-3">
             {categories.map((category, index) => (
-              <div 
+              <div
                 key={index}
                 className="grid grid-cols-12 gap-3 items-start p-3 rounded-xl border border-[var(--role-border)] bg-[var(--role-accent)]/30"
               >

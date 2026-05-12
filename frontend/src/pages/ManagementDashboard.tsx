@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
+import { supabase } from '../lib/supabase';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   AreaChart, Area
@@ -14,10 +15,30 @@ const ManagementDashboard = () => {
   const [user, setUser] = useState<any>(null);
   const [departments, setDepartments] = useState<any[]>([]);
   const [requests, setRequests] = useState<any[]>([]);
+  const [cashAdvances, setCashAdvances] = useState<any[]>([]);
   const [fiscalYear, setFiscalYear] = useState(new Date().getFullYear());
   const [loading, setLoading] = useState(true);
+  const [currency, setCurrency] = useState<'PHP' | 'USD' | 'IDR'>('PHP');
   
   const dashboardRef = useRef<HTMLDivElement>(null);
+
+  // Currency conversion rates (example rates - should be from API in production)
+  const exchangeRates = {
+    PHP: 1,
+    USD: 0.018,
+    IDR: 15800
+  };
+
+  const currencySymbols = {
+    PHP: '₱',
+    USD: '$',
+    IDR: 'Rp'
+  };
+
+  const formatCurrency = (amount: number) => {
+    const converted = amount * exchangeRates[currency];
+    return `${currencySymbols[currency]}${converted.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -32,12 +53,14 @@ const ManagementDashboard = () => {
     setLoading(true);
     const token = localStorage.getItem('token');
     try {
-      const [deptRes, reqRes] = await Promise.all([
+      const [deptRes, reqRes, caRes] = await Promise.all([
         api.get('/api/departments', { headers: { Authorization: `Bearer ${token}` } }),
-        api.get('/api/reports/requests', { headers: { Authorization: `Bearer ${token}` } })
+        api.get('/api/reports/requests', { headers: { Authorization: `Bearer ${token}` } }),
+        api.get('/api/cash-advances', { headers: { Authorization: `Bearer ${token}` } })
       ]);
       setDepartments(deptRes.data || []);
       setRequests(reqRes.data || []);
+      setCashAdvances(caRes.data || []);
     } catch (err) {
       toast.error('Failed to load management data');
     } finally {
@@ -48,6 +71,42 @@ const ManagementDashboard = () => {
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Real-time subscription for departments changes
+  useEffect(() => {
+    if (!supabase) return;
+
+    const channel = supabase
+      .channel('management-departments-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'departments' },
+        () => {
+          fetchData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'budget_categories' },
+        () => {
+          fetchData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'expense_requests' },
+        () => {
+          fetchData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      if (supabase) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, [fiscalYear]);
 
   const filteredDepts = useMemo(() => 
     departments.filter(d => Number(d.fiscal_year) === fiscalYear),
@@ -97,6 +156,104 @@ const ManagementDashboard = () => {
     const monthOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return monthOrder.map(m => ({ month: m, amount: months[m] || 0 }));
   }, [requests, fiscalYear]);
+
+  // Budget Variance Analysis
+  const budgetVariance = useMemo(() => {
+    return filteredDepts.map(d => {
+      const budget = toNumber(d.annual_budget);
+      const spent = toNumber(d.used_budget);
+      const remaining = budget - spent;
+      const variance = budget - spent;
+      const variancePercent = budget > 0 ? ((variance / budget) * 100) : 0;
+      const status = variancePercent < 0 ? 'Over Budget' : variancePercent < 10 ? 'Critical' : variancePercent < 20 ? 'Warning' : 'Healthy';
+      
+      return {
+        name: d.name,
+        budget,
+        spent,
+        remaining,
+        variance,
+        variancePercent,
+        status
+      };
+    }).sort((a, b) => a.variancePercent - b.variancePercent);
+  }, [filteredDepts]);
+
+  // Cash Advance Tracking
+  const cashAdvanceStats = useMemo(() => {
+    const totalOutstanding = cashAdvances.reduce((sum, ca) => sum + toNumber(ca.amount_issued) - toNumber(ca.balance), 0);
+    const pendingLiquidations = cashAdvances.filter(ca => ca.status === 'outstanding' || ca.status === 'partially_liquidated').length;
+    const fullyLiquidated = cashAdvances.filter(ca => ca.status === 'fully_liquidated').length;
+    
+    // Calculate aging
+    const now = new Date();
+    const aging = {
+      '0-30': 0,
+      '31-60': 0,
+      '61-90': 0,
+      '90+': 0
+    };
+    
+    cashAdvances.forEach(ca => {
+      if (ca.status === 'outstanding' || ca.status === 'partially_liquidated') {
+        const issuedDate = new Date(ca.created_at);
+        const daysDiff = Math.floor((now.getTime() - issuedDate.getTime()) / (1000 * 60 * 60 * 24));
+        
+        if (daysDiff <= 30) aging['0-30']++;
+        else if (daysDiff <= 60) aging['31-60']++;
+        else if (daysDiff <= 90) aging['61-90']++;
+        else aging['90+']++;
+      }
+    });
+    
+    return { totalOutstanding, pendingLiquidations, fullyLiquidated, aging };
+  }, [cashAdvances]);
+
+  // Expense Type Flow Analysis
+  const expenseFlowAnalysis = useMemo(() => {
+    const reimbursements = requests.filter(r => r.type === 'reimbursement');
+    const cashAdvances = requests.filter(r => r.type === 'cash_advance');
+    const liquidations = cashAdvances.filter(r => r.liquidation_status && r.liquidation_status !== 'none');
+
+    return {
+      reimbursements: {
+        total: reimbursements.length,
+        pending: reimbursements.filter(r => ['pending_supervisor', 'pending_accounting'].includes(r.status)).length,
+        approved: reimbursements.filter(r => r.status === 'approved').length,
+        released: reimbursements.filter(r => r.status === 'released').length,
+        totalAmount: reimbursements.reduce((sum, r) => sum + toNumber(r.amount), 0)
+      },
+      cashAdvances: {
+        total: cashAdvances.length,
+        pending: cashAdvances.filter(r => ['pending_supervisor', 'pending_accounting'].includes(r.status)).length,
+        approved: cashAdvances.filter(r => r.status === 'approved').length,
+        released: cashAdvances.filter(r => r.status === 'released').length,
+        totalAmount: cashAdvances.reduce((sum, r) => sum + toNumber(r.amount), 0)
+      },
+      liquidations: {
+        total: liquidations.length,
+        pending: liquidations.filter(r => r.liquidation_status === 'pending').length,
+        approved: liquidations.filter(r => r.liquidation_status === 'approved').length,
+        rejected: liquidations.filter(r => r.liquidation_status === 'rejected').length,
+        totalAmount: liquidations.reduce((sum, r) => sum + toNumber(r.liquidation_amount || 0), 0)
+      }
+    };
+  }, [requests]);
+  const deptPerformance = useMemo(() => {
+    return filteredDepts
+      .map(d => {
+        const util = toNumber(d.annual_budget) > 0 ? (toNumber(d.used_budget) / toNumber(d.annual_budget)) * 100 : 0;
+        const efficiency = util <= 100 ? util : 100 - (util - 100); // Penalize over-budget
+        return {
+          name: d.name,
+          utilization: util,
+          efficiency,
+          budget: toNumber(d.annual_budget),
+          spent: toNumber(d.used_budget)
+        };
+      })
+      .sort((a, b) => b.efficiency - a.efficiency);
+  }, [filteredDepts]);
 
   const exportCSV = () => {
     const headers = ['Department', 'Fiscal Year', 'Annual Budget', 'Used Budget', 'Remaining Budget', 'Utilization %'];
@@ -377,8 +534,8 @@ const ManagementDashboard = () => {
     <div className="space-y-8" ref={dashboardRef}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-[var(--role-text)]">Management Control</h1>
-          <p className="text-[var(--role-text)]/60 text-sm mt-1">Full visibility into department expenses and cash flow nating ginagawa.</p>
+          <h1 className="text-3xl font-bold text-[var(--role-text)]">Executive Management Dashboard</h1>
+          <p className="text-[var(--role-text)]/60 text-sm mt-1">Total budget visibility across all departments</p>
         </div>
         <div className="flex items-center gap-3 no-print">
           <select 
@@ -389,6 +546,15 @@ const ManagementDashboard = () => {
             {[...new Set(departments.map(d => d.fiscal_year))].sort((a,b) => b-a).map(year => (
               <option key={year} value={year}>FY {year}</option>
             ))}
+          </select>
+          <select 
+            value={currency} 
+            onChange={(e) => setCurrency(e.target.value as 'PHP' | 'USD' | 'IDR')}
+            className="field-input !w-32"
+          >
+            <option value="PHP">PHP (₱)</option>
+            <option value="USD">USD ($)</option>
+            <option value="IDR">IDR (Rp)</option>
           </select>
           <div className="flex gap-2">
             <button onClick={exportCSV} className="btn-secondary !py-2 flex items-center gap-2">
@@ -442,7 +608,7 @@ const ManagementDashboard = () => {
                   </div>
                 </div>
                 <p className="mt-3 text-[11px] text-gray-500">
-                  Remaining: <span className="font-bold text-gray-700">{formatMoney(toNumber(dept.annual_budget) - toNumber(dept.used_budget))}</span>
+                  Remaining: <span className="font-bold text-gray-700">{formatCurrency(toNumber(dept.annual_budget) - toNumber(dept.used_budget))}</span>
                 </p>
               </div>
             ))}
@@ -452,24 +618,24 @@ const ManagementDashboard = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="panel !p-6 border-b-4 border-emerald-500">
-          <p className="text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Total FY Budget</p>
-          <p className="text-3xl font-black mt-2 text-[var(--role-text)]">{formatMoney(stats.totalBudget)}</p>
-          <p className="text-xs text-emerald-500 mt-2 font-bold">Allocated Funds</p>
+          <p className="text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Total Budget (All Depts)</p>
+          <p className="text-3xl font-black mt-2 text-[var(--role-text)]">{formatCurrency(stats.totalBudget)}</p>
+          <p className="text-xs text-emerald-500 mt-2 font-bold">{filteredDepts.length} Departments</p>
         </div>
         <div className="panel !p-6 border-b-4 border-blue-500">
           <p className="text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Total Expenses</p>
-          <p className="text-3xl font-black mt-2 text-[var(--role-text)]">{formatMoney(stats.totalSpent)}</p>
-          <p className="text-xs text-blue-500 mt-2 font-bold">{formatPercent(stats.utilization)} of budget used</p>
+          <p className="text-3xl font-black mt-2 text-[var(--role-text)]">{formatCurrency(stats.totalSpent)}</p>
+          <p className="text-xs text-blue-500 mt-2 font-bold">{formatPercent(stats.utilization)} utilized</p>
         </div>
         <div className="panel !p-6 border-b-4 border-amber-500">
-          <p className="text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Cash Balance</p>
-          <p className="text-3xl font-black mt-2 text-[var(--role-text)]">{formatMoney(stats.remaining)}</p>
-          <p className="text-xs text-amber-500 mt-2 font-bold">Available for Release</p>
+          <p className="text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Available Balance</p>
+          <p className="text-3xl font-black mt-2 text-[var(--role-text)]">{formatCurrency(stats.remaining)}</p>
+          <p className="text-xs text-amber-500 mt-2 font-bold">Remaining funds</p>
         </div>
         <div className="panel !p-6 border-b-4 border-purple-500">
-          <p className="text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Avg. Utilization</p>
-          <p className="text-3xl font-black mt-2 text-[var(--role-text)]">{formatPercent(stats.utilization)}</p>
-          <p className="text-xs text-purple-500 mt-2 font-bold">Across {filteredDepts.length} Depts</p>
+          <p className="text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Pending Approvals</p>
+          <p className="text-3xl font-black mt-2 text-[var(--role-text)]">{requests.filter(r => ['pending_supervisor', 'pending_accounting'].includes(r.status)).length}</p>
+          <p className="text-xs text-purple-500 mt-2 font-bold">Awaiting action</p>
         </div>
       </div>
 
@@ -483,7 +649,7 @@ const ManagementDashboard = () => {
                 <XAxis type="number" hide />
                 <YAxis dataKey="name" type="category" width={120} fontSize={10} stroke="var(--role-text)" />
                 <Tooltip 
-                  formatter={(value: any) => formatMoney(value)}
+                  formatter={(value: any) => formatCurrency(value)}
                   contentStyle={{ backgroundColor: 'var(--role-surface)', borderRadius: '12px', border: '1px solid var(--role-border)' }}
                 />
                 <Bar dataKey="spent" fill="var(--role-primary)" radius={[0, 4, 4, 0]} barSize={20} />
@@ -507,12 +673,268 @@ const ManagementDashboard = () => {
                 <XAxis dataKey="month" fontSize={12} stroke="var(--role-text)" />
                 <YAxis fontSize={10} stroke="var(--role-text)" tickFormatter={(v) => `₱${(v/1000).toFixed(0)}k`} />
                 <Tooltip 
-                  formatter={(value: any) => formatMoney(value)}
+                  formatter={(value: any) => formatCurrency(value)}
                   contentStyle={{ backgroundColor: 'var(--role-surface)', borderRadius: '12px', border: '1px solid var(--role-border)' }}
                 />
                 <Area type="monotone" dataKey="amount" stroke="var(--role-primary)" fillOpacity={1} fill="url(#colorAmount)" strokeWidth={3} />
               </AreaChart>
             </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="panel !p-5 border-l-4 border-blue-500">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Pending Supervisor</p>
+              <p className="text-2xl font-black mt-1 text-[var(--role-text)]">{requests.filter(r => r.status === 'pending_supervisor').length}</p>
+            </div>
+            <div className="h-10 w-10 flex items-center justify-center rounded-xl bg-blue-500/10 text-blue-500">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+            </div>
+          </div>
+        </div>
+        <div className="panel !p-5 border-l-4 border-amber-500">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Pending Accounting</p>
+              <p className="text-2xl font-black mt-1 text-[var(--role-text)]">{requests.filter(r => r.status === 'pending_accounting').length}</p>
+            </div>
+            <div className="h-10 w-10 flex items-center justify-center rounded-xl bg-amber-500/10 text-amber-500">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414-5.414A1 1 0 0112.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+              </svg>
+            </div>
+          </div>
+        </div>
+        <div className="panel !p-5 border-l-4 border-purple-500">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Disbursed This FY</p>
+              <p className="text-2xl font-black mt-1 text-[var(--role-text)]">{requests.filter(r => r.status === 'released').length}</p>
+            </div>
+            <div className="h-10 w-10 flex items-center justify-center rounded-xl bg-purple-500/10 text-purple-500">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Budget Variance Analysis */}
+      <div className="panel overflow-hidden">
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-lg font-bold">Budget Variance Analysis</h3>
+          <span className="text-xs text-[var(--role-text)]/60">Actual vs Planned Spending</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-[var(--role-border)]">
+                <th className="py-3 px-4 text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Department</th>
+                <th className="py-3 px-4 text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Budget</th>
+                <th className="py-3 px-4 text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Spent</th>
+                <th className="py-3 px-4 text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Variance</th>
+                <th className="py-3 px-4 text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--role-border)]">
+              {budgetVariance.slice(0, 5).map((dept) => (
+                <tr key={dept.name} className="hover:bg-[var(--role-accent)]/30 transition">
+                  <td className="py-3 px-4 font-bold">{dept.name}</td>
+                  <td className="py-3 px-4">{formatCurrency(dept.budget)}</td>
+                  <td className="py-3 px-4">{formatCurrency(dept.spent)}</td>
+                  <td className={`py-3 px-4 font-bold ${dept.variance < 0 ? 'text-red-500' : 'text-emerald-500'}`}>
+                    {formatCurrency(dept.variance)} ({dept.variancePercent.toFixed(1)}%)
+                  </td>
+                  <td className="py-3 px-4">
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${
+                      dept.status === 'Over Budget' ? 'bg-red-500 text-white' :
+                      dept.status === 'Critical' ? 'bg-orange-500 text-white' :
+                      dept.status === 'Warning' ? 'bg-yellow-500 text-white' :
+                      'bg-emerald-500 text-white'
+                    }`}>
+                      {dept.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Cash Advance Tracking */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="panel">
+          <h3 className="text-lg font-bold mb-6">Cash Advance Tracking</h3>
+          <div className="grid grid-cols-2 gap-4 mb-6">
+            <div className="bg-[var(--role-accent)] rounded-xl p-4">
+              <p className="text-xs text-[var(--role-text)]/60">Total Outstanding</p>
+              <p className="text-2xl font-black text-[var(--role-text)]">{formatCurrency(cashAdvanceStats.totalOutstanding)}</p>
+            </div>
+            <div className="bg-[var(--role-accent)] rounded-xl p-4">
+              <p className="text-xs text-[var(--role-text)]/60">Pending Liquidations</p>
+              <p className="text-2xl font-black text-[var(--role-text)]">{cashAdvanceStats.pendingLiquidations}</p>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <p className="text-xs font-bold uppercase tracking-widest text-[var(--role-text)]/40">Aging Analysis</p>
+            <div className="grid grid-cols-4 gap-2">
+              {Object.entries(cashAdvanceStats.aging).map(([range, count]) => (
+                <div key={range} className="text-center">
+                  <p className="text-2xl font-black text-[var(--role-text)]">{count}</p>
+                  <p className="text-xs text-[var(--role-text)]/60">{range} days</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Department Performance Ranking */}
+        <div className="panel">
+          <h3 className="text-lg font-bold mb-6">Department Performance Ranking</h3>
+          <div className="space-y-3">
+            {deptPerformance.slice(0, 5).map((dept, index) => (
+              <div key={dept.name} className="flex items-center justify-between p-3 rounded-xl bg-[var(--role-accent)]">
+                <div className="flex items-center gap-3">
+                  <div className={`h-8 w-8 flex items-center justify-center rounded-full font-bold text-sm ${
+                    index === 0 ? 'bg-yellow-500 text-white' :
+                    index === 1 ? 'bg-gray-400 text-white' :
+                    index === 2 ? 'bg-orange-400 text-white' :
+                    'bg-[var(--role-border)] text-[var(--role-text)]'
+                  }`}>
+                    {index + 1}
+                  </div>
+                  <div>
+                    <p className="font-bold text-[var(--role-text)]">{dept.name}</p>
+                    <p className="text-xs text-[var(--role-text)]/60">{formatCurrency(dept.spent)} spent</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="font-bold text-[var(--role-text)]">{dept.utilization.toFixed(1)}%</p>
+                  <p className="text-xs text-[var(--role-text)]/60">utilization</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Expense Flow Analysis: Reimbursement → Cash Advance → Liquidation */}
+      <div className="panel overflow-hidden">
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-lg font-bold">Expense Flow Analysis</h3>
+          <span className="text-xs text-[var(--role-text)]/60">Reimbursement → Cash Advance → Liquidation</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Reimbursement */}
+          <div className="bg-[var(--role-accent)] rounded-xl p-5 border-l-4 border-blue-500">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-10 w-10 flex items-center justify-center rounded-xl bg-blue-500 text-white">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414-5.414A1 1 0 0112.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <div>
+                <p className="font-bold text-[var(--role-text)]">Reimbursement</p>
+                <p className="text-xs text-[var(--role-text)]/60">Post-payment claims</p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="flex justify-between">
+                <span className="text-xs text-[var(--role-text)]/60">Total Requests</span>
+                <span className="font-bold text-[var(--role-text)]">{expenseFlowAnalysis.reimbursements.total}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-xs text-[var(--role-text)]/60">Pending</span>
+                <span className="font-bold text-amber-500">{expenseFlowAnalysis.reimbursements.pending}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-xs text-[var(--role-text)]/60">Released</span>
+                <span className="font-bold text-emerald-500">{expenseFlowAnalysis.reimbursements.released}</span>
+              </div>
+              <div className="border-t border-[var(--role-border)] pt-3">
+                <div className="flex justify-between">
+                  <span className="text-xs text-[var(--role-text)]/60">Total Amount</span>
+                  <span className="font-black text-[var(--role-text)]">{formatCurrency(expenseFlowAnalysis.reimbursements.totalAmount)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Cash Advance */}
+          <div className="bg-[var(--role-accent)] rounded-xl p-5 border-l-4 border-purple-500">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-10 w-10 flex items-center justify-center rounded-xl bg-purple-500 text-white">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              </div>
+              <div>
+                <p className="font-bold text-[var(--role-text)]">Cash Advance</p>
+                <p className="text-xs text-[var(--role-text)]/60">Pre-payment funds</p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="flex justify-between">
+                <span className="text-xs text-[var(--role-text)]/60">Total Requests</span>
+                <span className="font-bold text-[var(--role-text)]">{expenseFlowAnalysis.cashAdvances.total}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-xs text-[var(--role-text)]/60">Pending</span>
+                <span className="font-bold text-amber-500">{expenseFlowAnalysis.cashAdvances.pending}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-xs text-[var(--role-text)]/60">Released</span>
+                <span className="font-bold text-emerald-500">{expenseFlowAnalysis.cashAdvances.released}</span>
+              </div>
+              <div className="border-t border-[var(--role-border)] pt-3">
+                <div className="flex justify-between">
+                  <span className="text-xs text-[var(--role-text)]/60">Total Amount</span>
+                  <span className="font-black text-[var(--role-text)]">{formatCurrency(expenseFlowAnalysis.cashAdvances.totalAmount)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Liquidation */}
+          <div className="bg-[var(--role-accent)] rounded-xl p-5 border-l-4 border-emerald-500">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-10 w-10 flex items-center justify-center rounded-xl bg-emerald-500 text-white">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                </svg>
+              </div>
+              <div>
+                <p className="font-bold text-[var(--role-text)]">Liquidation</p>
+                <p className="text-xs text-[var(--role-text)]/60">Settlement reports</p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="flex justify-between">
+                <span className="text-xs text-[var(--role-text)]/60">Total Liquidations</span>
+                <span className="font-bold text-[var(--role-text)]">{expenseFlowAnalysis.liquidations.total}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-xs text-[var(--role-text)]/60">Pending</span>
+                <span className="font-bold text-amber-500">{expenseFlowAnalysis.liquidations.pending}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-xs text-[var(--role-text)]/60">Approved</span>
+                <span className="font-bold text-emerald-500">{expenseFlowAnalysis.liquidations.approved}</span>
+              </div>
+              <div className="border-t border-[var(--role-border)] pt-3">
+                <div className="flex justify-between">
+                  <span className="text-xs text-[var(--role-text)]/60">Total Amount</span>
+                  <span className="font-black text-[var(--role-text)]">{formatCurrency(expenseFlowAnalysis.liquidations.totalAmount)}</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -542,15 +964,15 @@ const ManagementDashboard = () => {
                 return (
                   <tr key={dept.id} className="hover:bg-[var(--role-accent)]/30 transition">
                     <td className="py-4 px-4 font-bold">{dept.name}</td>
-                    <td className="py-4 px-4 font-medium">{formatMoney(total)}</td>
-                    <td className="py-4 px-4 text-blue-500 font-bold">{formatMoney(used)}</td>
+                    <td className="py-4 px-4 font-medium">{formatCurrency(total)}</td>
+                    <td className="py-4 px-4 text-blue-500 font-bold">{formatCurrency(used)}</td>
                     <td className={`py-4 px-4 font-bold ${remaining < 0 ? 'text-red-500' : 'text-emerald-500'}`}>
-                      {formatMoney(remaining)}
+                      {formatCurrency(remaining)}
                     </td>
                     <td className="py-4 px-4">
                       <div className="flex items-center gap-3">
                         <div className="flex-1 h-2 bg-[var(--role-border)] rounded-full overflow-hidden">
-                          <div 
+                          <div
                             className={`h-full rounded-full ${util > 90 ? 'bg-red-500' : util > 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
                             style={{ width: `${Math.min(100, util)}%` }}
                           />

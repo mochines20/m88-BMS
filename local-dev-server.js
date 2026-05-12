@@ -575,9 +575,16 @@ const adjustCategoryReleased = async (request) => {
     const amount = toNumber(request.amount);
     const newCommitted = Math.max(0, toNumber(category.committed_amount) - amount);
     const newUsed = toNumber(category.used_amount) + amount;
+    const newRemaining = toNumber(category.budget_amount) - newUsed;
+    
     const { error } = await supabase
       .from('budget_categories')
-      .update({ committed_amount: newCommitted, used_amount: newUsed, updated_at: new Date() })
+      .update({ 
+        committed_amount: newCommitted, 
+        used_amount: newUsed,
+        remaining_amount: Math.max(0, newRemaining),
+        updated_at: new Date() 
+      })
       .eq('id', category.id);
     if (error) return { ok: false, reason: error.message };
     return { ok: true, category, newCommitted, newUsed };
@@ -1648,6 +1655,32 @@ app.post('/api/requests', authenticate, authorize(['employee', 'manager', 'super
 
     if (!activeDepartment) {
       return res.status(400).json({ error: 'Your department is not configured for the active fiscal year yet.' });
+    }
+
+    // Validate category budget before submission
+    if (category && activeDepartment.id) {
+      const { data: categoryBudget, error: categoryError } = await supabase
+        .from('budget_categories')
+        .select('id, budget_amount, used_amount, committed_amount, remaining_amount')
+        .eq('category_name', category)
+        .eq('department_id', activeDepartment.id)
+        .eq('fiscal_year', activeFiscalYear)
+        .maybeSingle();
+      
+      if (categoryError && categoryError.code !== 'PGRST116') {
+        return res.status(400).json({ error: 'Failed to validate category budget' });
+      }
+      
+      if (!categoryBudget) {
+        return res.status(400).json({ error: `No budget category "${category}" found for your department` });
+      }
+      
+      const remaining = toNumber(categoryBudget.remaining_amount);
+      if (remaining < normalizedAmount) {
+        return res.status(400).json({ 
+          error: `Insufficient budget in category "${category}". Available: ${remaining.toFixed(2)}, Requested: ${normalizedAmount.toFixed(2)}` 
+        });
+      }
     }
 
     // Determine initial status based on user role
@@ -3074,39 +3107,54 @@ app.get('/api/budget/categories', authenticate, async (req, res) => {
     const activeFiscalYear = await getLatestConfiguredFiscalYear();
     const targetFiscalYear = fiscal_year ? parseInt(fiscal_year) : activeFiscalYear;
 
-    // Security: Employees can only see their own department's categories
-    // Always fetch current department from DB (JWT token might be stale)
+    // Security & Filtering Logic:
+    // 1. Employees/Managers are locked to their own department.
+    // 2. Supervisors are locked to their department (unless they have access to others, but for categories we usually want their own).
+    // 3. Accounting/Admin can specify a department_id.
+    
     let targetDepartmentId = department_id;
-    if (req.user.role === 'employee' || req.user.role === 'manager') {
-      // Fetch current department from database to ensure it's up to date
-      const { data: userData } = await supabase
-        .from('users')
-        .select('department_id')
-        .eq('id', req.user.id)
-        .single();
-      
-      // Force employee to only see their own department
-      targetDepartmentId = userData?.department_id || req.user.department_id;
+    
+    // Fetch fresh user data to ensure department_id is accurate
+    const { data: userData } = await supabase
+      .from('users')
+      .select('department_id, role')
+      .eq('id', req.user.id)
+      .single();
+
+    const userRole = userData?.role || req.user.role;
+    const userDeptId = userData?.department_id || req.user.department_id;
+
+    if (userRole === 'employee' || userRole === 'manager' || userRole === 'supervisor') {
+      // Force filter to their own department
+      targetDepartmentId = userDeptId;
+    } else if (!targetDepartmentId) {
+      // For accounting/admin, if no department_id is passed, default to their own 
+      // but they are allowed to see everything if they don't have a department? 
+      // Actually, it's better to default to their own if they have one.
+      targetDepartmentId = userDeptId;
     }
 
-    let query = supabase
-      .from('budget_categories')
-      .select('*');
+    let query = supabase.from('budget_categories').select('*');
 
-    if (targetDepartmentId) {
+    if (targetDepartmentId && targetDepartmentId !== 'undefined' && targetDepartmentId !== 'null') {
       query = query.eq('department_id', targetDepartmentId);
+    } else if (userRole !== 'accounting' && userRole !== 'admin' && userRole !== 'super_admin') {
+      // If a non-admin somehow has no department_id, they should see NOTHING
+      return res.json([]);
     }
 
     const { data, error } = await query.order('category_name');
     if (error) throw error;
 
-    // Filter by fiscal year in code to handle both matching year and NULL values
+    // Filter by fiscal year. 
+    // We only show NULL fiscal year if it matches the department (legacy categories)
     const filteredData = (data || []).filter(cat => 
       cat.fiscal_year === targetFiscalYear || cat.fiscal_year === null
     );
 
     res.json(filteredData);
   } catch (error) {
+    console.error('Error fetching budget categories:', error);
     res.status(500).json({ error: error.message });
   }
 });

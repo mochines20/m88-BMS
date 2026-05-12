@@ -2,8 +2,8 @@ import { useState, useMemo, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import toast from 'react-hot-toast';
-import { formatMoney, toNumber } from '../utils/format';
-import { CATEGORY_STRUCTURE, MainCategory, SubCategory } from '../utils/categories';
+import { supabase } from '../lib/supabase';
+import { formatMoney, toNumber , getErrorMessage } from '../utils/format';
 
 const RequestForm = () => {
   const { id } = useParams();
@@ -15,32 +15,11 @@ const RequestForm = () => {
     priority: 'normal'
   });
   const [loading, setLoading] = useState(false);
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [department, setDepartment] = useState<any>(null);
   const [userRole, setUserRole] = useState<string>('');
-
-  // Category selection states
-  const [selectedMain, setSelectedMain] = useState<MainCategory | null>(null);
-  const [selectedSub, setSelectedSub] = useState<string | SubCategory | null>(null);
-  const [selectedItem, setSelectedItem] = useState<string>('');
-
-  useEffect(() => {
-    if (isInitialLoad && id) return; // Wait for fetch to complete if editing
-
-    // Construct final category string
-    let finalCategory = '';
-    if (selectedMain) {
-      finalCategory = selectedMain.name;
-      if (selectedSub) {
-        const subName = typeof selectedSub === 'string' ? selectedSub : selectedSub.name;
-        finalCategory += ` > ${subName}`;
-        if (selectedItem) {
-          finalCategory += ` > ${selectedItem}`;
-        }
-      }
-    }
-    setForm(prev => ({ ...prev, category: finalCategory }));
-  }, [selectedMain, selectedSub, selectedItem, id, isInitialLoad]);
+  const [categories, setCategories] = useState<any[]>([]);
+  const [requestCode, setRequestCode] = useState<string>('');
+  const [selectedCategoryBudget, setSelectedCategoryBudget] = useState<any>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -51,48 +30,51 @@ const RequestForm = () => {
         const userRes = await api.get('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } });
         setUserRole(userRes.data.role || '');
 
-        if (userRes.data.department_id) {
-          const deptRes = await api.get('/api/departments', { headers: { Authorization: `Bearer ${token}` } });
-          const userDept = deptRes.data.find((d: any) => d.id === userRes.data.department_id);
-          setDepartment(userDept);
-        }
+        let targetDeptId = userRes.data.department_id;
+        let targetFiscalYear = userRes.data.fiscal_year || new Date().getFullYear();
 
-        // If editing, fetch existing request
+        let req: any = null;
+        // If editing, fetch existing request first to know its department/year
         if (id) {
           const reqRes = await api.get(`/api/requests/${id}`, { headers: { Authorization: `Bearer ${token}` } });
-          const req = reqRes.data;
+          req = reqRes.data;
           
-          if (req.status !== 'returned_for_revision') {
+          if (req.status !== 'returned_for_revision' && userRes.data.role !== 'admin' && userRes.data.role !== 'accounting') {
             toast.error('Only returned requests can be edited.');
             navigate('/tracker');
             return;
           }
 
+          // Use the request's department and fiscal year for category filtering
+          targetDeptId = req.department_id || targetDeptId;
+          targetFiscalYear = req.fiscal_year || targetFiscalYear;
+
+          setRequestCode(req.request_code || id.slice(0, 8));
           setItems([{ name: req.item_name, amount: String(req.amount) }]);
-          // Strip out any existing item breakdown from purpose to avoid duplication
           const cleanPurpose = req.purpose?.split('\n\nItem Breakdown:')[0] || req.purpose || '';
           setForm({
             category: req.category,
             purpose: cleanPurpose,
             priority: req.priority
           });
+        }
 
-          // Try to parse category for dropdowns
-          const parts = req.category.split(' > ');
-          if (parts[0]) {
-            const main = CATEGORY_STRUCTURE.find(c => c.name === parts[0]);
-            if (main) {
-              setSelectedMain(main);
-              if (parts[1]) {
-                const sub = main.subcategories.find(s => (typeof s === 'string' ? s : s.name) === parts[1]);
-                if (sub) {
-                  setSelectedSub(sub);
-                  if (parts[2]) setSelectedItem(parts[2]);
-                }
-              }
-            }
+        if (targetDeptId) {
+          const [deptRes, catRes] = await Promise.all([
+            api.get('/api/departments', { headers: { Authorization: `Bearer ${token}` } }),
+            api.get(`/api/budget/categories?department_id=${targetDeptId}&fiscal_year=${targetFiscalYear}`, { headers: { Authorization: `Bearer ${token}` } })
+          ]);
+          
+          const dept = deptRes.data.find((d: any) => d.id === targetDeptId);
+          setDepartment(dept);
+          setCategories(catRes.data || []);
+          
+          // If we have a category in the form, find its budget details
+          if (form.category || (id && catRes.data)) {
+            const currentCat = form.category || (id ? req.category : '');
+            const selected = catRes.data.find((c: any) => c.category_name === currentCat || c.category_code === currentCat);
+            setSelectedCategoryBudget(selected || null);
           }
-          setIsInitialLoad(false);
         }
       } catch (err) {
         console.error('Failed to fetch user/department data', err);
@@ -100,6 +82,26 @@ const RequestForm = () => {
     };
 
     fetchData();
+
+    // Real-time subscription for budget updates
+    let budgetChannel: any;
+    if (supabase) {
+      budgetChannel = supabase
+        .channel('budget-realtime-form')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'departments' }, () => {
+          fetchData();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'budget_categories' }, () => {
+          fetchData();
+        })
+        .subscribe();
+    }
+
+    return () => {
+      if (budgetChannel && supabase) {
+        supabase.removeChannel(budgetChannel);
+      }
+    };
   }, [id, navigate]);
 
   const totalAmount = useMemo(() => {
@@ -156,6 +158,7 @@ const RequestForm = () => {
     
     const payload = {
       item_name: combinedItemName,
+      department_id: department?.id,
       category: form.category,
       amount: totalAmount,
       purpose: `${form.purpose}\n\nItem Breakdown:\n${itemBreakdown}`,
@@ -167,6 +170,7 @@ const RequestForm = () => {
         // Edit / Resubmit mode - use same combined data as new request
         await api.patch(`/api/requests/${id}/resubmit`, {
           item_name: combinedItemName,
+          department_id: department?.id,
           amount: totalAmount,
           category: form.category,
           priority: form.priority,
@@ -185,12 +189,9 @@ const RequestForm = () => {
         toast.success('Bulk request submitted successfully!');
         setItems([{ name: '', amount: '' }]);
         setForm({ category: '', purpose: '', priority: 'normal' });
-        setSelectedMain(null);
-        setSelectedSub(null);
-        setSelectedItem('');
       }
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Submission failed');
+      toast.error(getErrorMessage(err, 'Submission failed'));
     } finally {
       setLoading(false);
     }
@@ -201,7 +202,7 @@ const RequestForm = () => {
       <div className="page-header">
         <h1 className="page-title">{id ? 'Edit & Resubmit Request' : 'New Request'}</h1>
         <p className="page-subtitle">
-          {id ? `Updating request ${id.slice(0, 8)}...` : 'Submit your budget request. You can now add multiple items in a single ticket.'}
+          {id ? `Updating request ${requestCode}...` : 'Submit your budget request. You can now add multiple items in a single ticket.'}
         </p>
       </div>
 
@@ -288,66 +289,66 @@ const RequestForm = () => {
 
             <div className="space-y-4">
               <label className="field-label">Category Selection</label>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <div>
-                  <select 
-                    className="field-input" 
-                    value={selectedMain?.name || ''} 
-                    onChange={e => {
-                      const main = CATEGORY_STRUCTURE.find(c => c.name === e.target.value) || null;
-                      setSelectedMain(main);
-                      setSelectedSub(null);
-                      setSelectedItem('');
-                    }}
-                    required
-                  >
-                    <option value="">Select Category</option>
-                    {CATEGORY_STRUCTURE.map(main => (
-                      <option key={main.name} value={main.name}>{main.name}</option>
-                    ))}
-                  </select>
+              <select 
+                className="field-input" 
+                value={form.category} 
+                onChange={e => {
+                  setForm({...form, category: e.target.value});
+                  const selected = categories.find(c => c.category_name === e.target.value);
+                  setSelectedCategoryBudget(selected || null);
+                }}
+                required
+              >
+                <option value="">Select Category</option>
+                {categories.map(cat => {
+                  const remaining = toNumber(cat.remaining_amount);
+                  const isOutOfBudget = remaining <= 0;
+                  return (
+                    <option key={cat.id} value={cat.category_name} disabled={isOutOfBudget && userRole === 'employee'}>
+                      {cat.category_code ? `${cat.category_code} - ` : ''}{cat.category_name} 
+                      {(userRole === 'admin' || userRole === 'accounting') && ` (₱${remaining.toLocaleString()} remaining)`}
+                      {isOutOfBudget ? ' - OUT OF BUDGET' : ''}
+                    </option>
+                  );
+                })}
+              </select>
+              
+              {selectedCategoryBudget && (userRole === 'admin' || userRole === 'accounting') && (
+                <div className={`rounded-xl p-4 border ${toNumber(selectedCategoryBudget.remaining_amount) >= totalAmount ? 'bg-green-500/10 border-green-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-widest text-[var(--role-text)]/50 font-bold">Budget Allocated</p>
+                      <p className="mt-1 font-semibold text-[var(--role-text)]">{formatMoney(toNumber(selectedCategoryBudget.budget_amount))}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-widest text-[var(--role-text)]/50 font-bold">Already Used</p>
+                      <p className="mt-1 font-semibold text-[var(--role-text)]">{formatMoney(toNumber(selectedCategoryBudget.used_amount))}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-widest text-[var(--role-text)]/50 font-bold">Available</p>
+                      <p className={`mt-1 font-semibold ${toNumber(selectedCategoryBudget.remaining_amount) >= totalAmount ? 'text-green-600' : 'text-red-600'}`}>
+                        {formatMoney(toNumber(selectedCategoryBudget.remaining_amount))}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-widest text-[var(--role-text)]/50 font-bold">Your Request</p>
+                      <p className={`mt-1 font-semibold ${toNumber(selectedCategoryBudget.remaining_amount) >= totalAmount ? 'text-green-600' : 'text-red-600'}`}>
+                        {formatMoney(totalAmount)}
+                      </p>
+                    </div>
+                  </div>
+                  {toNumber(selectedCategoryBudget.remaining_amount) < totalAmount && (
+                    <div className="mt-3 flex items-start gap-2 bg-red-500/20 border border-red-500/30 rounded-lg p-2">
+                      <svg className="w-4 h-4 text-red-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4v2m0 0a9 9 0 110-18 9 9 0 010 18z" />
+                      </svg>
+                      <p className="text-xs text-red-600 font-semibold">
+                        ⚠️ Insufficient budget in category. You need {formatMoney(totalAmount - toNumber(selectedCategoryBudget.remaining_amount))} more.
+                      </p>
+                    </div>
+                  )}
                 </div>
-
-                {selectedMain && selectedMain.subcategories.length > 0 && (
-                  <div>
-                    <select 
-                      className="field-input" 
-                      value={typeof selectedSub === 'string' ? selectedSub : selectedSub?.name || ''} 
-                      onChange={e => {
-                        const sub = selectedMain.subcategories.find(s => 
-                          (typeof s === 'string' ? s : s.name) === e.target.value
-                        ) || null;
-                        setSelectedSub(sub);
-                        setSelectedItem('');
-                      }}
-                      required
-                    >
-                      <option value="">Select Sub-category</option>
-                      {selectedMain.subcategories.map(sub => {
-                        const name = typeof sub === 'string' ? sub : sub.name;
-                        return <option key={name} value={name}>{name}</option>;
-                      })}
-                    </select>
-                  </div>
-                )}
-
-                {selectedSub && typeof selectedSub !== 'string' && selectedSub.items && (
-                  <div>
-                    <select 
-                      className="field-input" 
-                      value={selectedItem} 
-                      onChange={e => setSelectedItem(e.target.value)}
-                      required
-                    >
-                      <option value="">Select Detail</option>
-                      {selectedSub.items.map(item => {
-                        const itemName = typeof item === 'string' ? item : item.name;
-                        return <option key={itemName} value={itemName}>{itemName}</option>;
-                      })}
-                    </select>
-                  </div>
-                )}
-              </div>
+              )}
               
               <div className="rounded-xl bg-[var(--role-accent)]/50 p-3 border border-dashed border-[var(--role-secondary)]/20">
                 <p className="text-[10px] uppercase tracking-widest text-[var(--role-text)]/50 font-bold">Current Selection</p>
@@ -515,11 +516,8 @@ const RequestForm = () => {
                         toast.success('Request submitted for supervisor approval!');
                         setItems([{ name: '', amount: '' }]);
                         setForm({ category: '', purpose: '', priority: 'normal' });
-                        setSelectedMain(null);
-                        setSelectedSub(null);
-                        setSelectedItem('');
                       } catch (err: any) {
-                        toast.error(err.response?.data?.error || 'Submission failed');
+                        toast.error(getErrorMessage(err, 'Submission failed'));
                       } finally {
                         setLoading(false);
                       }

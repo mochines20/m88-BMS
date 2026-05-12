@@ -15,6 +15,7 @@ import Profile from './pages/Profile';
 import EmployeeHome from './pages/EmployeeHome';
 import FinanceDashboard from './pages/FinanceDashboard';
 import BudgetSetup from './pages/BudgetSetup';
+import BudgetManagement from './pages/BudgetManagement';
 import NewRequestForm from './pages/NewRequestForm';
 import CashAdvanceAging from './pages/CashAdvanceAging';
 import AuditTrail from './pages/AuditTrail';
@@ -32,6 +33,7 @@ function App() {
               <Route path="/employee" element={<EmployeeHome />} />
               <Route path="/finance" element={<FinanceDashboard />} />
               <Route path="/budget-setup" element={<BudgetSetup />} />
+              <Route path="/budget-management" element={<BudgetManagement />} />
               <Route path="/budget-monitoring" element={<FinanceDashboard />} />
               <Route path="/requests/new" element={<NewRequestForm />} />
               <Route path="/reimbursement" element={<ReimbursementForm />} />

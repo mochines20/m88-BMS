@@ -129,6 +129,7 @@ router.get('/:id/budget-breakdown', authenticate, async (req: any, res) => {
     supabase
       .from('expense_requests')
       .select('id, request_code, department_id, item_name, category, amount, priority, status, submitted_at, updated_at')
+      .eq('fiscal_year', selectedDepartment.fiscal_year)
       .order('submitted_at', { ascending: false }),
     supabase
       .from('direct_expenses')
@@ -216,6 +217,19 @@ router.get('/:id/budget-breakdown', authenticate, async (req: any, res) => {
       .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0)
   };
 
+  // Fetch categories for this department
+  const { data: categories } = await supabase
+    .from('budget_categories')
+    .select('id, category_code, category_name, budget_amount, used_amount, committed_amount, department_id')
+    .eq('department_id', departmentId)
+    .order('category_name');
+
+  // If categories are set, their sum IS the annual budget
+  const categoryBudgetTotal = (categories || []).reduce((s: number, c: any) => s + toNumber(c.budget_amount), 0);
+  if (categoryBudgetTotal > 0) {
+    totals.annual_budget = categoryBudgetTotal;
+  }
+
   const breakdownTotal = totals.released_requests_total + totals.direct_expenses_total;
   const remainingBudget = totals.annual_budget - totals.used_budget;
   const committedBudget = totals.used_budget + totals.pending_supervisor_total + totals.pending_accounting_total;
@@ -232,6 +246,7 @@ router.get('/:id/budget-breakdown', authenticate, async (req: any, res) => {
       projected_remaining_budget: totals.annual_budget - committedBudget,
       breakdown_variance: totals.used_budget - breakdownTotal
     },
+    categories: categories || [],
     totals,
     counts: {
       total_requests: requestsWithDepartmentShare.length,

@@ -2,6 +2,7 @@ import { useState, useMemo, useRef } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
+import { getErrorMessage } from '../utils/format';
 
 interface ReimbursementItem {
   payee_name: string;
@@ -191,7 +192,7 @@ const ReimbursementForm = () => {
         fileInputRef.current.value = '';
       }
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Submission failed');
+      toast.error(getErrorMessage(err, 'Submission failed'));
     } finally {
       setLoading(false);
     }

@@ -26,6 +26,22 @@ router.get('/', authenticate, async (req: any, res) => {
   }
 });
 
+// PATCH /api/notifications/mark-all-read - Mark all as read for current user
+router.patch('/mark-all-read', authenticate, async (req: any, res) => {
+  try {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('user_id', req.user.id)
+      .eq('is_read', false);
+
+    if (error) return res.status(400).json({ error });
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // PATCH /api/notifications/:id/read - Mark notification as read
 router.patch('/:id/read', authenticate, async (req: any, res) => {
   try {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useExchangeRates } from '../hooks/useExchangeRates';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import toast from 'react-hot-toast';
@@ -9,8 +10,9 @@ import {
   formatUptime,
   normalizeDisplayName,
   getRequesterName,
-  getRequesterDepartment
-} from '../utils/format';
+  getRequesterDepartment,
+  formatDateTime
+, getErrorMessage } from '../utils/format';
 import {
   BarChart,
   Bar,
@@ -63,7 +65,7 @@ const getStatusTone = (status: string) => {
 const getRoleHeadline = (role?: string) => {
   switch (role) {
     case 'employee':
-      return 'Track your requests and stay updated on their progress.';
+      return 'Track your expenses and stay updated on their progress.';
     case 'supervisor':
       return 'Oversee your department\'s requests and manage approvals.';
     case 'accounting':
@@ -72,7 +74,7 @@ const getRoleHeadline = (role?: string) => {
     case 'super_admin':
       return 'Manage system-wide settings, users, and department budgets.';
     default:
-      return 'Manage your budget requests and approvals in one place.';
+      return 'Manage your budget expenses and approvals in one place.';
   }
 };
 
@@ -122,6 +124,9 @@ const Dashboard = () => {
   const [flowPage, setFlowPage] = useState(1);
   const [archiveView, setArchiveView] = useState<'active' | 'archived' | 'all'>('active');
   const [departmentBudget, setDepartmentBudget] = useState<any>(null);
+  const [allDepartments, setAllDepartments] = useState<any[]>([]);
+  const [displayCurrency, setDisplayCurrency] = useState<'PHP' | 'USD' | 'IDR'>('PHP');
+  const { rates: fxRates, loading: fxLoading, lastUpdated: fxLastUpdated } = useExchangeRates();
 
   const pageSize = 3;
 
@@ -147,6 +152,15 @@ const Dashboard = () => {
       }
     };
 
+    const fetchDepartmentsInternal = async () => {
+      try {
+        const res = await api.get('/api/departments', { headers: { Authorization: `Bearer ${token}` } });
+        setAllDepartments(res.data || []);
+      } catch {
+        setAllDepartments([]);
+      }
+    };
+
     const refreshDashboard = async () => {
       try {
         const [userResponse, requestsResponse] = await Promise.all([
@@ -154,11 +168,40 @@ const Dashboard = () => {
           api.get('/api/requests', { headers: { Authorization: `Bearer ${token}` } })
         ]);
         setUser(userResponse.data);
-        
+
         // Redirect employees and managers to EmployeeHome
         if (userResponse.data.role === 'employee' || userResponse.data.role === 'manager') {
           navigate('/employee');
           return;
+        }
+
+        // Redirect admin/super_admin to Admin panel
+        if (userResponse.data.role === 'admin' || userResponse.data.role === 'super_admin') {
+          navigate('/admin');
+          return;
+        }
+
+        // Redirect management executive to Management Dashboard
+        if (userResponse.data.role === 'management') {
+          navigate('/management');
+          return;
+        }
+
+        // Redirect accounting to their dashboard
+        if (userResponse.data.role === 'accounting') {
+          navigate('/accounting');
+          return;
+        }
+
+        // Redirect supervisor to Approvals
+        if (userResponse.data.role === 'supervisor') {
+          navigate('/approvals');
+          return;
+        }
+
+        // Fetch all departments for VP and President overview
+        if (userResponse.data.role === 'vp' || userResponse.data.role === 'president') {
+          await fetchDepartmentsInternal();
         }
         
         setRequests(requestsResponse.data);
@@ -197,16 +240,22 @@ const Dashboard = () => {
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'expense_requests' },
-          () => {
-            void refreshDashboard();
-          }
+          () => { void refreshDashboard(); }
         )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'approval_logs' },
-          () => {
-            void refreshDashboard();
-          }
+          () => { void refreshDashboard(); }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'departments' },
+          () => { void fetchDepartmentsInternal(); }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'budget_categories' },
+          () => { void fetchDepartmentsInternal(); }
         )
         .subscribe();
     }
@@ -342,11 +391,207 @@ const Dashboard = () => {
       )));
       toast.success(`Request ${archived ? 'archived' : 'unarchived'} successfully.`);
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Archive update failed');
+      toast.error(getErrorMessage(err, 'Archive update failed'));
     }
   };
 
   if (!user) return <div className="text-[var(--role-text)]">Loading...</div>;
+
+  if (user.role === 'vp' || user.role === 'president') {
+    // Get latest fiscal year and filter to that year only
+    const latestFiscalYear = allDepartments.reduce((max, d) => Math.max(max, toNumber(d.fiscal_year)), 0);
+    const currentYearDepts = allDepartments.filter(d => toNumber(d.fiscal_year) === latestFiscalYear);
+    // Deduplicate by name — keep one per department name
+    const uniqueDepts = Object.values(
+      currentYearDepts.reduce((acc: Record<string, any>, d) => {
+        const key = String(d.name).trim().toLowerCase();
+        if (!acc[key] || toNumber(d.annual_budget) > toNumber(acc[key].annual_budget)) {
+          acc[key] = d;
+        }
+        return acc;
+      }, {})
+    );
+
+    const fx = fxRates[displayCurrency] ?? 1;
+    const convert = (v: number) => v * fx;
+
+    const totalAnnualBudget = convert(uniqueDepts.reduce((sum, d) => sum + toNumber(d.annual_budget), 0));
+    const totalUsed = convert(uniqueDepts.reduce((sum, d) => sum + toNumber(d.used_budget), 0));
+    const totalRemaining = convert(uniqueDepts.reduce((sum, d) => sum + toNumber(d.remaining_budget), 0));
+    const totalPending = convert(uniqueDepts.reduce((sum, d) => sum + toNumber(d.pending_supervisor_total) + toNumber(d.pending_accounting_total), 0));
+
+    // Per-currency breakdown from requests
+    const currencyTotals: Record<string, { total: number; used: number; pending: number; count: number }> = {};
+    requests.forEach((r: any) => {
+      const cur: string = r.currency || 'PHP';
+      if (!currencyTotals[cur]) currencyTotals[cur] = { total: 0, used: 0, pending: 0, count: 0 };
+      currencyTotals[cur].total += toNumber(r.amount);
+      currencyTotals[cur].count += 1;
+      if (r.status === 'released' || r.status === 'approved') currencyTotals[cur].used += toNumber(r.amount);
+      if (['pending_supervisor', 'pending_accounting'].includes(r.status)) currencyTotals[cur].pending += toNumber(r.amount);
+    });
+
+    return (
+      <div className="text-[var(--role-text)]">
+        <div className="page-header flex items-start justify-between flex-wrap gap-4">
+          <div>
+            <h1 className="page-title">Office Budget Overview</h1>
+            <p className="page-subtitle">Overall budget status across all departments for fiscal year {latestFiscalYear || '—'}.</p>
+          </div>
+          {/* Currency Switcher */}
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-1 rounded-xl border border-[var(--role-border)] bg-[var(--role-accent)] p-1">
+              {(['PHP', 'USD', 'IDR'] as const).map(cur => (
+                <button
+                  key={cur}
+                  onClick={() => setDisplayCurrency(cur)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                    displayCurrency === cur
+                      ? 'bg-[var(--role-primary)] text-white shadow'
+                      : 'text-[var(--role-text)]/60 hover:text-[var(--role-text)]'
+                  }`}
+                >
+                  {cur === 'PHP' ? '🇵🇭 PHP' : cur === 'USD' ? '🇺🇸 USD' : '🇮🇩 IDR'}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-[var(--role-text)]/40">
+              {fxLoading ? '⏳ Fetching live rates...' : fxLastUpdated ? `🟢 Live · Updated ${fxLastUpdated.toLocaleTimeString()}` : '⚠️ Using fallback rates'}
+            </p>
+          </div>
+        </div>
+
+        {/* Summary Cards */}
+        <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="panel flex items-center gap-4 !bg-blue-500/5 border-blue-500/20">
+            <div className="rounded-2xl bg-blue-500/10 p-3 text-blue-600">
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-widest text-blue-600/60 font-bold">Total Annual Budget</p>
+              <p className="text-xl font-black text-blue-700">{formatMoney(totalAnnualBudget, displayCurrency)}</p>
+            </div>
+          </div>
+          <div className="panel flex items-center gap-4 !bg-rose-500/5 border-rose-500/20">
+            <div className="rounded-2xl bg-rose-500/10 p-3 text-rose-600">
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-widest text-rose-600/60 font-bold">Total Used</p>
+              <p className="text-xl font-black text-rose-700">{formatMoney(totalUsed, displayCurrency)}</p>
+            </div>
+          </div>
+          <div className="panel flex items-center gap-4 !bg-emerald-500/5 border-emerald-500/20">
+            <div className="rounded-2xl bg-emerald-500/10 p-3 text-emerald-600">
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-widest text-emerald-600/60 font-bold">Remaining</p>
+              <p className="text-xl font-black text-emerald-700">{formatMoney(totalRemaining, displayCurrency)}</p>
+            </div>
+          </div>
+          <div className="panel flex items-center gap-4 !bg-amber-500/5 border-amber-500/20">
+            <div className="rounded-2xl bg-amber-500/10 p-3 text-amber-600">
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-widest text-amber-600/60 font-bold">Pending Requests</p>
+              <p className="text-xl font-black text-amber-700">{formatMoney(totalPending, displayCurrency)}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Currency Breakdown */}
+        <div className="mb-8">
+            <h2 className="text-base font-bold mb-3 text-[var(--role-text)]/70 uppercase tracking-wider text-sm">Expense Requests by Currency</h2>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              {(['PHP', 'USD', 'IDR'] as const).map(cur => {
+                const data = currencyTotals[cur] ?? { total: 0, used: 0, pending: 0, count: 0 };
+                const currencyLabel = cur === 'PHP' ? '🇵🇭 Philippine Peso (PHP)' : cur === 'USD' ? '🇺🇸 US Dollar (USD)' : '🇮🇩 Indonesian Rupiah (IDR)';
+                const colorClass = cur === 'PHP' ? 'border-blue-500/20 !bg-blue-500/5' : cur === 'USD' ? 'border-emerald-500/20 !bg-emerald-500/5' : 'border-red-500/20 !bg-red-500/5';
+                return (
+                  <div key={cur} className={`panel ${colorClass}`}>
+                    <p className="text-xs font-bold mb-3 text-[var(--role-text)]/60">{currencyLabel}</p>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-[var(--role-text)]/60">Total Requests</span>
+                        <span className="font-bold">{data.count}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[var(--role-text)]/60">Total Amount</span>
+                        <span className="font-bold font-mono">{formatMoney(data.total, cur)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[var(--role-text)]/60">Released/Approved</span>
+                        <span className="font-bold font-mono text-emerald-600">{formatMoney(data.used, cur)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[var(--role-text)]/60">Pending</span>
+                        <span className="font-bold font-mono text-amber-600">{formatMoney(data.pending, cur)}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+        {/* Department Budget Table */}
+        <div className="panel">
+          <h2 className="text-lg font-bold mb-4">Department Budget Breakdown</h2>
+          {uniqueDepts.length === 0 ? (
+            <p className="text-[var(--role-text)]/50 text-sm py-8 text-center">No department data available.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--role-border)]">
+                    <th className="text-left py-3 px-4 font-semibold text-[var(--role-text)]/60 uppercase text-xs tracking-wider">Department</th>
+                    <th className="text-right py-3 px-4 font-semibold text-[var(--role-text)]/60 uppercase text-xs tracking-wider">Annual Budget</th>
+                    <th className="text-right py-3 px-4 font-semibold text-[var(--role-text)]/60 uppercase text-xs tracking-wider">Used</th>
+                    <th className="text-right py-3 px-4 font-semibold text-[var(--role-text)]/60 uppercase text-xs tracking-wider">Remaining</th>
+                    <th className="text-right py-3 px-4 font-semibold text-[var(--role-text)]/60 uppercase text-xs tracking-wider">Pending</th>
+                    <th className="py-3 px-4 font-semibold text-[var(--role-text)]/60 uppercase text-xs tracking-wider">Utilization</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {uniqueDepts.map((dept: any) => {
+                    const annual = toNumber(dept.annual_budget);
+                    const used = toNumber(dept.used_budget);
+                    const remaining = toNumber(dept.remaining_budget ?? (annual - used));
+                    const pending = toNumber(dept.pending_supervisor_total) + toNumber(dept.pending_accounting_total);
+                    const utilPct = annual > 0 ? Math.min(100, Math.round((used / annual) * 100)) : 0;
+                    const isHigh = utilPct >= 80;
+                    const isMid = utilPct >= 50;
+                    return (
+                      <tr key={dept.id} className="border-b border-[var(--role-border)]/50 hover:bg-[var(--role-accent)]/50 transition">
+                        <td className="py-3 px-4 font-medium">{dept.name}</td>
+                        <td className="py-3 px-4 text-right font-mono">{formatMoney(convert(annual), displayCurrency)}</td>
+                        <td className="py-3 px-4 text-right font-mono text-rose-600">{formatMoney(convert(used), displayCurrency)}</td>
+                        <td className="py-3 px-4 text-right font-mono text-emerald-600">{formatMoney(convert(remaining), displayCurrency)}</td>
+                        <td className="py-3 px-4 text-right font-mono text-amber-600">{formatMoney(convert(pending), displayCurrency)}</td>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 bg-[var(--role-border)] rounded-full h-2 overflow-hidden">
+                              <div
+                                className={`h-2 rounded-full transition-all ${isHigh ? 'bg-rose-500' : isMid ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                style={{ width: `${utilPct}%` }}
+                              />
+                            </div>
+                            <span className={`text-xs font-bold w-10 text-right ${isHigh ? 'text-rose-600' : isMid ? 'text-amber-600' : 'text-emerald-600'}`}>{utilPct}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (user.role === 'super_admin') {
     return (
@@ -389,7 +634,7 @@ const Dashboard = () => {
               </svg>
             </div>
             <div>
-              <p className="text-xs uppercase tracking-widest text-purple-600/60 font-bold">Total Requests</p>
+              <p className="text-xs uppercase tracking-widest text-purple-600/60 font-bold">Total Expenses</p>
               <p className="text-2xl font-black text-purple-700">{systemHealth?.counts?.requests || 0}</p>
             </div>
           </div>
@@ -484,7 +729,10 @@ const Dashboard = () => {
                   <span className="text-xs font-bold uppercase tracking-tighter">Roles</span>
                 </button>
 
-                <button className="flex flex-col items-center justify-center p-4 rounded-3xl bg-[var(--role-accent)] hover:bg-[var(--role-primary)]/10 transition group border border-[var(--role-border)]">
+                <button 
+                  onClick={() => navigate('/audit-trail')}
+                  className="flex flex-col items-center justify-center p-4 rounded-3xl bg-[var(--role-accent)] hover:bg-[var(--role-primary)]/10 transition group border border-[var(--role-border)]"
+                >
                   <div className="p-3 rounded-2xl bg-purple-500/10 text-purple-600 mb-2 group-hover:scale-110 transition">
                     <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
@@ -521,7 +769,7 @@ const Dashboard = () => {
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-[var(--role-text)] truncate capitalize">{log.action} • {log.stage}</p>
                         <p className="text-xs text-[var(--role-text)]/50 mt-0.5">{log.actor_name || 'System'}</p>
-                        <p className="text-[10px] text-[var(--role-text)]/40 mt-1">{new Date(log.latestTimestamp).toLocaleString()}</p>
+                        <p className="text-[10px] text-[var(--role-text)]/40 mt-1">{formatDateTime(log.latestTimestamp)}</p>
                       </div>
                     </div>
                   ))
@@ -560,7 +808,7 @@ const Dashboard = () => {
           <>
             <div className="stat-card group relative overflow-hidden">
               <div className="absolute inset-0 bg-gradient-to-br from-[var(--role-primary)]/20 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-              <p className="stat-label">My Requests</p>
+              <p className="stat-label">My Expenses</p>
               <h3 className="stat-value">{stats.total}</h3>
             </div>
             <div className="stat-card group relative overflow-hidden">
@@ -570,7 +818,7 @@ const Dashboard = () => {
             </div>
             <div className="stat-card group relative overflow-hidden">
               <div className="absolute inset-0 bg-gradient-to-br from-[var(--role-text)]/20 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-              <p className="stat-label">Approved / Released</p>
+              <p className="stat-label">Approved / Disbursed</p>
               <h3 className="stat-value" style={{ color: 'var(--role-text)' }}>{stats.released}</h3>
             </div>
             <div className="stat-card group relative overflow-hidden">
@@ -606,7 +854,7 @@ const Dashboard = () => {
               </h3>
             </div>
           </>
-        ) : user.role === 'super_admin' ? (
+        ) : (user.role === 'super_admin' || user.role === 'admin') ? (
           <>
             <div className="stat-card group relative overflow-hidden">
               <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/20 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
@@ -637,17 +885,17 @@ const Dashboard = () => {
           <>
             <div className="stat-card group relative overflow-hidden">
               <div className="absolute inset-0 bg-gradient-to-br from-[var(--role-text)]/20 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-              <p className="stat-label">Awaiting Release</p>
+              <p className="stat-label">Awaiting Disbursement</p>
               <h3 className="stat-value" style={{ color: 'var(--role-text)' }}>{stats.pendingAccounting}</h3>
             </div>
             <div className="stat-card group relative overflow-hidden">
               <div className="absolute inset-0 bg-gradient-to-br from-[var(--role-primary)]/20 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-              <p className="stat-label">Total Requests</p>
+              <p className="stat-label">Total Expenses</p>
               <h3 className="stat-value">{stats.total}</h3>
             </div>
             <div className="stat-card group relative overflow-hidden">
               <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/20 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-              <p className="stat-label">Total Released</p>
+              <p className="stat-label">Total Disbursed</p>
               <h3 className="stat-value" style={{ color: 'var(--role-text)' }}>{formatMoney(stats.releasedAmount)}</h3>
             </div>
             <div className="stat-card group relative overflow-hidden">
@@ -659,7 +907,7 @@ const Dashboard = () => {
         )}
       </div>
 
-      {user.role !== 'employee' && user.role !== 'manager' && user.role !== 'super_admin' && (
+      {user.role !== 'employee' && user.role !== 'manager' && user.role !== 'super_admin' && user.role !== 'admin' && (
         <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
           <div className="panel">
             <h2 className="mb-4 text-xl font-bold text-[var(--role-text)]">Budget Utilization</h2>
@@ -725,7 +973,7 @@ const Dashboard = () => {
       )}
 
       {/* Monthly Spending Trends - Full Width */}
-      {user.role !== 'employee' && user.role !== 'manager' && user.role !== 'super_admin' && (
+      {user.role !== 'employee' && user.role !== 'manager' && user.role !== 'super_admin' && user.role !== 'admin' && (
         <div className="mb-8 panel">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-bold text-[var(--role-text)]">Monthly Spending Trends</h2>
@@ -815,7 +1063,7 @@ const Dashboard = () => {
           
           <div className="mt-4 pt-4 border-t border-[var(--role-border)]">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-[var(--role-text)]/70">Budget Health</span>
+              <span className="text-[var(--role-text)]/70">Budget Status</span>
               <span className={`font-medium ${
                 (departmentBudget.totals?.used_budget / departmentBudget.totals?.annual_budget) > 0.9 
                   ? 'text-red-600' 
@@ -854,7 +1102,7 @@ const Dashboard = () => {
                   ? 'Review and approve department requests efficiently.'
                   : user.role === 'super_admin'
                   ? 'Overview of system-wide request activity and status.'
-                  : 'Process fund releases and monitor financial flows.'}
+                  : 'Process fund disbursements and monitor financial flows.'}
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-3">
@@ -900,9 +1148,9 @@ const Dashboard = () => {
                   <p className="mt-1 text-xs text-[var(--role-text)]/60">Requests still waiting for action</p>
                 </div>
                 <div className="panel-muted !p-4">
-                  <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/50">Released Amount</p>
+                  <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/50">Disbursed Amount</p>
                   <p className="mt-2 text-lg font-semibold text-[var(--role-text)]">{formatMoney(stats.releasedAmount)}</p>
-                  <p className="mt-1 text-xs text-[var(--role-text)]/60">Requests already released</p>
+                  <p className="mt-1 text-xs text-[var(--role-text)]/60">Requests already disbursed</p>
                 </div>
                 <div className="panel-muted !p-4">
                   <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/50">Rejected Amount</p>
@@ -1048,7 +1296,7 @@ const Dashboard = () => {
         <div className="space-y-6">
           <div className="panel">
             <h2 className="text-2xl font-bold text-[var(--role-text)]">
-              {user.role === 'employee' || user.role === 'manager' ? 'Your Tasks' : user.role === 'supervisor' ? 'Approval Queue' : user.role === 'super_admin' ? 'Root Access' : 'Financial Controls'}
+              {user.role === 'employee' || user.role === 'manager' ? 'Your Tasks' : user.role === 'supervisor' ? 'Approval Queue' : (user.role === 'super_admin' || user.role === 'admin') ? 'Admin Access' : 'Financial Controls'}
             </h2>
             <p className="mt-2 text-sm text-[var(--role-text)]/70">
               {user.role === 'employee' || user.role === 'manager'
@@ -1076,7 +1324,7 @@ const Dashboard = () => {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                       </svg>
                     </span>
-                    View My Requests
+                    View My Expenses
                   </button>
                 </>
               )}
@@ -1151,7 +1399,7 @@ const Dashboard = () => {
                   </button>
                 </>
               )}
-              {user.role === 'super_admin' && (
+              {(user.role === 'super_admin' || user.role === 'admin') && (
                 <>
                   <button onClick={() => navigate('/admin')} className="btn-primary w-full !justify-start items-center gap-4 min-h-[72px]">
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--role-text-inverse)]/20">
@@ -1159,7 +1407,7 @@ const Dashboard = () => {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                       </svg>
                     </span>
-                    Root
+                    Admin
                   </button>
                   <button onClick={() => navigate('/')} className="btn-secondary w-full !justify-start items-center gap-4 min-h-[72px]">
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--role-text)]/5">
@@ -1198,7 +1446,7 @@ const Dashboard = () => {
                           {log.count > 1 ? ` (${log.count} similar entries)` : ''}
                         </p>
                         <p className="mt-1 text-xs text-[var(--role-text)]/50">
-                          {log.actor_name || 'System'} {log.actor_role ? `• ${log.actor_role}` : ''} • {new Date(log.latestTimestamp).toLocaleString()}
+                          {log.actor_name || 'System'} {log.actor_role ? `• ${log.actor_role}` : ''} • {formatDateTime(log.latestTimestamp)}
                         </p>
                       </div>
                     </div>
@@ -1215,7 +1463,7 @@ const Dashboard = () => {
 
           <div className="panel">
           <h2 className="text-2xl font-bold text-[var(--role-text)]">
-            {user.role === 'employee' || user.role === 'manager' ? 'Request Guide' : user.role === 'supervisor' ? 'Review Guide' : user.role === 'super_admin' ? 'System Guide' : 'Release Guide'}
+            {user.role === 'employee' || user.role === 'manager' ? 'Request Guide' : user.role === 'supervisor' ? 'Review Guide' : (user.role === 'super_admin' || user.role === 'admin') ? 'Admin Guide' : 'Release Guide'}
           </h2>
           <div className="mt-5 space-y-3">
             {user.role === 'employee' || user.role === 'manager' ? (

@@ -1,4 +1,4 @@
--- Sample data for Madison88 BMS
+﻿-- Sample data for Madison88 BMS
 -- Run this after the schema is created
 -- Department codes shown in the UI:
 -- IT Department -> m88IT
@@ -141,3 +141,36 @@ SET department_id = NULL,
     updated_at = NOW()
 WHERE users.email = 'sarah.superadmin@madison88.com'
   AND users.department_id IS NOT NULL;
+
+-- Insert sample budget categories for each department
+WITH active_year AS (
+  SELECT EXTRACT(YEAR FROM CURRENT_DATE)::INT AS fiscal_year
+)
+INSERT INTO budget_categories (department_id, fiscal_year, category_code, category_name, budget_amount)
+SELECT d.id, active_year.fiscal_year, bc.category_code, bc.category_name, bc.budget_amount
+FROM departments d
+CROSS JOIN active_year
+CROSS JOIN (VALUES
+  ('IT001', 'IT Equipment', 100000.00),
+  ('IT002', 'Software Licenses', 50000.00),
+  ('IT003', 'IT Services', 30000.00),
+  ('PUR001', 'Office Supplies', 50000.00),
+  ('PUR002', 'Equipment', 150000.00),
+  ('PUR003', 'Services', 50000.00),
+  ('PLAN001', 'Training', 50000.00),
+  ('PLAN002', 'Events', 100000.00),
+  ('LOG001', 'Transportation', 200000.00),
+  ('LOG002', 'Logistics Services', 100000.00),
+  ('HR001', 'Employee Benefits', 100000.00),
+  ('HR002', 'Training & Development', 50000.00),
+  ('FIN001', 'Accounting Software', 50000.00),
+  ('FIN002', 'Audit Services', 100000.00),
+  ('ADM001', 'Office Maintenance', 100000.00),
+  ('ADM002', 'Administrative Supplies', 50000.00)
+) AS bc(category_code, category_name, budget_amount)
+WHERE NOT EXISTS (
+  SELECT 1 FROM budget_categories b
+  WHERE b.department_id = d.id
+    AND b.fiscal_year = active_year.fiscal_year
+    AND b.category_code = bc.category_code
+);

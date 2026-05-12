@@ -40,7 +40,38 @@ exports.handler = async (event, context) => {
     if (event.httpMethod === 'POST') {
       authorize(['employee'])(user);
 
-      const { item_name, category, amount, purpose, priority } = JSON.parse(event.body);
+      const { item_name, category, category_id, amount, purpose, priority } = JSON.parse(event.body);
+      const normalizedAmount = Number(amount);
+
+      if (!item_name || !category || !purpose) {
+        return { statusCode: 400, body: JSON.stringify({ error: 'Item name, category, and purpose are required' }) };
+      }
+
+      if (normalizedAmount <= 0) {
+        return { statusCode: 400, body: JSON.stringify({ error: 'Amount must be greater than zero' }) };
+      }
+
+      // Validate category budget
+      const { data: categoryBudget, error: categoryError } = await supabase
+        .from('budget_categories')
+        .select('id, remaining_amount, category_name')
+        .eq('category_name', category)
+        .eq('department_id', user.department_id)
+        .maybeSingle();
+      
+      if (categoryError) return { statusCode: 400, body: JSON.stringify({ error: 'Failed to validate budget' }) };
+      if (!categoryBudget) return { statusCode: 400, body: JSON.stringify({ error: `Category "${category}" not found` }) };
+      
+      const remaining = Number(categoryBudget.remaining_amount);
+      if (remaining < normalizedAmount) {
+        return { 
+          statusCode: 400, 
+          body: JSON.stringify({ 
+            error: `Insufficient budget in "${category}". Available: ${remaining.toFixed(2)}, Requested: ${normalizedAmount.toFixed(2)}` 
+          }) 
+        };
+      }
+
       const request_code = `REQ-${Date.now()}`;
 
       const { data, error } = await supabase
@@ -51,7 +82,8 @@ exports.handler = async (event, context) => {
           department_id: user.department_id,
           item_name,
           category,
-          amount,
+          category_id,
+          amount: normalizedAmount,
           purpose,
           priority,
           status: 'pending_supervisor',

@@ -141,7 +141,8 @@ router.get('/summary', authenticate, async (req: any, res) => {
       return acc;
     }, {}),
     by_category: requests.reduce((acc, r) => {
-      acc[r.category] = (acc[r.category] || 0) + parseFloat(r.amount);
+      const cat = r.category || 'Uncategorized';
+      acc[cat] = (acc[cat] || 0) + parseFloat(r.amount);
       return acc;
     }, {})
   };

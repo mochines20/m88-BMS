@@ -108,7 +108,7 @@ router.get('/check-liquidations', authenticate, async (req, res) => {
           request_code,
           item_name,
           amount,
-          employee:users(name, email)
+          employee:users!expense_requests_employee_id_fkey(name, email)
         )
       `)
       .eq('status', 'pending_submission')

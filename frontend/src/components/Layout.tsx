@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import api from '../api';
 import toast, { Toaster } from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
-import { normalizeDisplayName } from '../utils/format';
+import { normalizeDisplayName, formatDateTime } from '../utils/format';
 
 interface LayoutProps {
   children: ReactNode;
@@ -65,14 +65,26 @@ const Layout = ({ children }: LayoutProps) => {
         setUser(currentUser);
         userIdRef.current = currentUser.id;
 
-        if (currentUser.role === 'supervisor' || currentUser.role === 'accounting') {
+        if (currentUser.role === 'supervisor' || currentUser.role === 'accounting' || currentUser.role === 'admin' || currentUser.role === 'vp' || currentUser.role === 'president') {
           const reqRes = await api.get('/api/requests', { headers: { Authorization: `Bearer ${token}` } });
           if (cancelled) return;
-          const count = reqRes.data.filter((r: any) =>
-            (currentUser.role === 'supervisor' && r.status === 'pending_supervisor') ||
-            (currentUser.role === 'accounting' && r.status === 'pending_accounting')
-          ).length;
-          setPendingApprovalsCount(count);
+          const VP_THRESHOLD = 500000;
+          const pendingCount = reqRes.data.filter((r: any) => {
+            if (currentUser.role === 'supervisor') return r.status === 'pending_supervisor';
+            if (currentUser.role === 'accounting') return r.status === 'pending_accounting' && (Number(r.amount) < VP_THRESHOLD || r.co_approved_by);
+            if (currentUser.role === 'admin') return r.status === 'pending_supervisor' || r.status === 'pending_accounting';
+            if (currentUser.role === 'vp') return r.status === 'pending_accounting' && !r.co_approved_by && Number(r.amount) <= VP_THRESHOLD;
+            if (currentUser.role === 'president') return r.status === 'pending_accounting' && !r.co_approved_by && Number(r.amount) > VP_THRESHOLD;
+            return false;
+          }).length;
+          // Also count submitted liquidations for accounting/admin
+          const liquidationCount = (currentUser.role === 'accounting' || currentUser.role === 'admin')
+            ? reqRes.data.filter((r: any) => 
+                r.latest_liquidation?.status === 'submitted' || 
+                r.liquidations?.some((l: any) => l.status === 'submitted')
+              ).length
+            : 0;
+          setPendingApprovalsCount(pendingCount + liquidationCount);
         } else {
           setPendingApprovalsCount(0);
         }
@@ -128,17 +140,30 @@ const Layout = ({ children }: LayoutProps) => {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         );
-      case 'management':
+      case 'admin':
+      case 'super_admin':
         return (
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        );
+      case 'vp':
+        return (
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+          </svg>
+        );
+      case 'president':
+        return (
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
           </svg>
         );
       default:
         return (
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
           </svg>
         );
     }
@@ -150,9 +175,10 @@ const Layout = ({ children }: LayoutProps) => {
       case 'manager': return 'Manager Workspace';
       case 'supervisor': return 'Supervisor Portal';
       case 'accounting': return 'Finance Control';
-      case 'management': return 'Management Executive';
-      case 'admin': return 'System Admin';
-      case 'super_admin': return 'Root Access';
+      case 'admin':
+      case 'super_admin': return 'System Admin';
+      case 'vp': return 'Vice President';
+      case 'president': return 'President';
       default: return 'BMS Access';
     }
   };
@@ -178,21 +204,34 @@ const Layout = ({ children }: LayoutProps) => {
 
   const navLinks = (
     <>
-      {user.role === 'employee' ? (
+      {(user.role === 'employee' || user.role === 'manager') ? (
         <>
           <Link to="/employee" className={getNavClassName('/employee')}>Overview</Link>
-          <Link to="/requests/new" className={`${getNavClassName('/requests/new')} whitespace-nowrap`}>New Request</Link>
+          <Link to="/requests/new" className={`${getNavClassName('/requests/new')} whitespace-nowrap`}>New Expense</Link>
           <Link to="/tracker" className={getNavClassName('/tracker')}>My History</Link>
         </>
       ) : (
         <>
-          <Link to="/" className={getNavClassName('/')}>Overview</Link>
-          <Link to="/requests/new" className={`${getNavClassName('/requests/new')} whitespace-nowrap`}>New Request</Link>
+          {(user.role === 'admin' || user.role === 'super_admin') ? (
+            <Link to="/admin" className={getNavClassName('/admin')}>Admin Overview</Link>
+          ) : user.role === 'management' ? (
+            <Link to="/management" className={getNavClassName('/management')}>Management Overview</Link>
+          ) : user.role === 'accounting' ? (
+            <Link to="/accounting" className={getNavClassName('/accounting')}>Overview</Link>
+          ) : (
+            <Link to="/" className={getNavClassName('/')}>Overview</Link>
+          )}
+          {(user.role !== 'super_admin' && user.role !== 'admin') && (
+            <Link to="/requests/new" className={`${getNavClassName('/requests/new')} whitespace-nowrap`}>New Expense</Link>
+          )}
+          {(user.role === 'vp' || user.role === 'president' || user.role === 'supervisor' || user.role === 'accounting') && (
+            <Link to="/tracker" className={getNavClassName('/tracker')}>My History</Link>
+          )}
         </>
       )}
-      {(user.role === 'supervisor' || user.role === 'accounting') && (
+      {(user.role === 'supervisor' || user.role === 'accounting' || user.role === 'admin' || user.role === 'vp' || user.role === 'president') && (
         <Link to="/approvals" className={`${getNavClassName('/approvals')} relative whitespace-nowrap`}>
-          {user.role === 'supervisor' ? 'Team Approvals' : 'Fund Releases'}
+          {user.role === 'supervisor' ? 'Team Approvals' : user.role === 'vp' || user.role === 'president' ? 'Approval Authority' : 'Fund Disbursements'}
           {pendingApprovalsCount > 0 && (
             <span className="ml-1.5 inline-flex h-5 min-w-[18px] items-center justify-center rounded-full border border-[var(--role-primary)]/20 bg-[var(--role-primary)]/10 px-1 text-[10px] font-semibold text-[var(--role-primary)]">
               {pendingApprovalsCount}
@@ -200,21 +239,19 @@ const Layout = ({ children }: LayoutProps) => {
           )}
         </Link>
       )}
-      {user.role !== 'employee' && user.role !== 'manager' && user.role !== 'super_admin' && (
-        <Link to="/reports" className={getNavClassName('/reports')}>Analytics</Link>
+      {user.role === 'admin' && (
+        <Link to="/budget-setup" className={getNavClassName('/budget-setup')}>Budget Setup</Link>
       )}
-      {(user.role === 'management' || user.role === 'admin' || user.role === 'super_admin') && (
-        <Link to="/management" className={getNavClassName('/management')}>Management</Link>
-      )}
-      {(user.role === 'admin' || user.role === 'accounting') && (
+      {user.role === 'admin' && (
         <Link to="/accounting" className={getNavClassName('/accounting')}>Accounting</Link>
       )}
-      {(user.role === 'admin' || user.role === 'accounting' || user.role === 'super_admin') && (
-        <Link to="/admin" className={getNavClassName('/admin')}>
-          {user.role === 'accounting' ? 'Budget Matrix' : user.role === 'super_admin' ? 'Root' : 'Admin'}
-        </Link>
+      {user.role === 'accounting' && (
+        <Link to="/budget-management" className={getNavClassName('/budget-management')}>Budget Matrix</Link>
       )}
-      {(user.role === 'employee' || user.role === 'manager' || user.role === 'supervisor') && (
+      {(user.role === 'admin' || user.role === 'super_admin') && (
+        <Link to="/reports" className={getNavClassName('/reports')}>Reports</Link>
+      )}
+      {(user.role === 'employee' || user.role === 'manager' || user.role === 'supervisor' || user.role === 'vp' || user.role === 'president') && (
         <Link to="/profile" className={getNavClassName('/profile')}>Settings</Link>
       )}
     </>
@@ -229,7 +266,7 @@ const Layout = ({ children }: LayoutProps) => {
             <img
               src="/madison88-logo.png"
               alt="Madison88"
-              className="h-12 w-auto rounded-xl border border-black/5 bg-white px-3 py-2 shadow-[0_8px_20px_rgba(0,0,0,0.06)]"
+              className="h-12 w-auto rounded-xl border border-[var(--role-border)] bg-[var(--bms-bg-2)] px-3 py-2 shadow-[0_8px_20px_rgba(0,0,0,0.3)]"
             />
             <div className="flex flex-col">
               <p className="text-sm font-bold text-[var(--role-text)] flex items-center gap-2">
@@ -258,8 +295,8 @@ const Layout = ({ children }: LayoutProps) => {
                   )}
                 </button>
                 {showNotifications && (
-                  <div className="absolute right-0 top-12 z-50 w-80 max-h-96 overflow-y-auto rounded-2xl border border-[var(--role-border)] bg-white shadow-[0_20px_50px_rgba(0,0,0,0.15)]">
-                    <div className="sticky top-0 flex items-center justify-between border-b border-black/5 bg-white p-4 rounded-t-2xl">
+                  <div className="absolute right-0 top-12 z-50 w-80 max-h-96 overflow-y-auto rounded-2xl border border-[var(--role-border)] bg-[var(--bms-bg-2)] shadow-[0_20px_50px_rgba(0,0,0,0.4)]">
+                    <div className="sticky top-0 flex items-center justify-between border-b border-[var(--role-border)] bg-[var(--bms-bg-2)] p-4 rounded-t-2xl">
                       <h3 className="font-bold text-[var(--role-text)]">Notifications</h3>
                       <div className="flex items-center gap-2">
                         {unreadCount > 0 && (
@@ -285,7 +322,7 @@ const Layout = ({ children }: LayoutProps) => {
                             className={`p-4 transition hover:bg-black/5 ${!notification.is_read ? 'bg-[var(--role-accent)]/30 border-l-2 border-l-[var(--role-primary)]' : ''}`}
                           >
                             <p className="text-sm text-[var(--role-text)]">{notification.message}</p>
-                            <p className="mt-1 text-xs text-[var(--bms-muted)]">{notification.created_at ? new Date(notification.created_at).toLocaleString() : 'Just now'}</p>
+                            <p className="mt-1 text-xs text-[var(--bms-muted)]">{notification.created_at ? formatDateTime(notification.created_at) : 'Just now'}</p>
                           </div>
                         ))
                       )}
@@ -315,8 +352,8 @@ const Layout = ({ children }: LayoutProps) => {
                 )}
               </button>
               {showNotifications && (
-                <div className="absolute right-0 top-12 z-50 w-80 max-h-80 overflow-y-auto rounded-2xl border border-[var(--role-border)] bg-white shadow-[0_20px_50px_rgba(0,0,0,0.15)]">
-                  <div className="sticky top-0 flex items-center justify-between border-b border-black/5 bg-white p-3 rounded-t-2xl">
+                <div className="absolute right-0 top-12 z-50 w-80 max-h-80 overflow-y-auto rounded-2xl border border-[var(--role-border)] bg-[var(--bms-bg-2)] shadow-[0_20px_50px_rgba(0,0,0,0.4)]">
+                  <div className="sticky top-0 flex items-center justify-between border-b border-[var(--role-border)] bg-[var(--bms-bg-2)] p-3 rounded-t-2xl">
                     <h3 className="font-bold text-sm text-[var(--role-text)]">Notifications</h3>
                     <div className="flex items-center gap-2">
                       {unreadCount > 0 && (
@@ -331,7 +368,7 @@ const Layout = ({ children }: LayoutProps) => {
                       notifications.slice(0, 10).map((n: any) => (
                         <div key={n.id} className={`p-3 text-xs ${!n.is_read ? 'bg-[var(--role-accent)]/30 border-l-2 border-l-[var(--role-primary)]' : ''}`}>
                           <p className="text-[var(--role-text)]">{n.message}</p>
-                          <p className="mt-0.5 text-[var(--bms-muted)]">{n.created_at ? new Date(n.created_at).toLocaleString() : 'Just now'}</p>
+                          <p className="mt-0.5 text-[var(--bms-muted)]">{n.created_at ? formatDateTime(n.created_at) : 'Just now'}</p>
                         </div>
                       ))
                     )}

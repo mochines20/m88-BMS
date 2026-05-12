@@ -4,7 +4,7 @@ import api from '../api';
 import toast from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import FilePreviewer from '../components/FilePreviewer';
-import { formatMoney, toNumber, getStatusLabel, getStatusColor } from '../utils/format';
+import { formatMoney, toNumber, getStatusLabel, getStatusColor, formatDateTime , getErrorMessage } from '../utils/format';
 import jsPDF from 'jspdf';
 
 const buildFlow = (status: string) => [
@@ -38,7 +38,11 @@ const RequestTracker = () => {
   const navigate = useNavigate();
   const [requests, setRequests] = useState<any[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
-  const [liquidationDraft, setLiquidationDraft] = useState({ actual_amount: '', remarks: '', file_url: '' });
+  const [liquidationDraft, setLiquidationDraft] = useState({ 
+    actual_amount: '', 
+    remarks: '', 
+    attachments: [] as { file_name: string, file_url: string }[] 
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState<'date' | 'amount'>('date');
@@ -48,7 +52,13 @@ const RequestTracker = () => {
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 10;
+  const pageSize = 3;
+  
+  // Audit trail state
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditPage, setAuditPage] = useState(1);
+  const auditPageSize = 3;
 
   const filteredRequests = useMemo(() => {
     let filtered = [...requests];
@@ -100,15 +110,25 @@ const RequestTracker = () => {
     setCurrentPage(1);
   }, [searchQuery, statusFilter, dateStart, dateEnd]);
 
+  // Fetch audit logs when selected request changes
+  useEffect(() => {
+    if (selectedRequest?.id) {
+      void fetchAuditLogs(selectedRequest.id);
+      setAuditPage(1); // Reset audit page
+    } else {
+      setAuditLogs([]);
+    }
+  }, [selectedRequest?.id]);
+
   const exportToCSV = () => {
-    const headers = ['Request Code', 'Item Name', 'Category', 'Amount', 'Status', 'Submitted At', 'Priority', 'Attachment Count'];
+    const headers = ['Expense No', 'Item Name', 'Category', 'Amount', 'Status', 'Submitted At', 'Priority', 'Attachment Count'];
     const rows = filteredRequests.map(req => [
       req.request_code,
       req.item_name,
       req.category,
       req.amount,
       req.status,
-      new Date(req.submitted_at).toLocaleString(),
+      formatDateTime(req.submitted_at),
       req.priority,
       Array.isArray(req.attachments) ? req.attachments.length : 0
     ]);
@@ -132,7 +152,7 @@ const RequestTracker = () => {
   const fetchRequests = async (showError = true, selectedId?: string) => {
     const token = localStorage.getItem('token');
     try {
-      const res = await api.get('/api/requests', { headers: { Authorization: `Bearer ${token}` } });
+      const res = await api.get('/api/requests/my', { headers: { Authorization: `Bearer ${token}` } });
       setRequests(res.data);
       
       const targetId = selectedId || selectedRequest?.id;
@@ -181,14 +201,38 @@ const RequestTracker = () => {
     };
   }, []);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      // In a real app, you would upload to Supabase Storage or similar.
-      // For now, we simulate a URL.
-      setLiquidationDraft(current => ({ ...current, file_url: URL.createObjectURL(file) }));
-      toast.success('Image attached!');
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const token = localStorage.getItem('token');
+    const newAttachments = [...liquidationDraft.attachments];
+
+    for (const file of Array.from(files)) {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const loadingToast = toast.loading(`Uploading ${file.name}...`);
+        const res = await api.post('/api/upload', formData, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+        toast.dismiss(loadingToast);
+        newAttachments.push({
+          file_name: res.data.file_name,
+          file_url: res.data.file_url
+        });
+        toast.success(`${file.name} uploaded!`);
+      } catch (err: any) {
+        console.error('Upload error details:', err);
+        const errorMsg = err.response?.data?.error || err.message || 'Upload failed';
+        toast.error(`Failed to upload ${file.name}: ${errorMsg}`);
+      }
     }
+
+    setLiquidationDraft(current => ({ ...current, attachments: newAttachments }));
   };
 
   const selectedFlow = useMemo(
@@ -198,98 +242,195 @@ const RequestTracker = () => {
 
   const submitLiquidation = async () => {
     if (!selectedRequest) return;
+    if (!liquidationDraft.actual_amount || Number(liquidationDraft.actual_amount) <= 0) {
+      return toast.error('Please enter a valid actual amount');
+    }
     const token = localStorage.getItem('token');
+    const loadingToast = toast.loading('Submitting liquidation...');
     try {
       await api.patch(
         `/api/requests/${selectedRequest.id}/liquidation`,
         {
           actual_amount: Number(liquidationDraft.actual_amount),
           remarks: liquidationDraft.remarks,
-          attachment_url: liquidationDraft.file_url
+          attachments: liquidationDraft.attachments
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
+      toast.dismiss(loadingToast);
       toast.success('Liquidation submitted!');
-      setLiquidationDraft({ actual_amount: '', remarks: '', file_url: '' });
+      setLiquidationDraft({ actual_amount: '', remarks: '', attachments: [] });
       await fetchRequests(false);
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Liquidation failed');
+      toast.dismiss(loadingToast);
+      toast.error(getErrorMessage(err, 'Liquidation failed'));
     }
   };
 
   const downloadVoucher = (req: any) => {
-    const doc = new jsPDF();
-    
-    // Add Logo or Header
-    doc.setFillColor(30, 43, 74);
-    doc.rect(0, 0, 210, 40, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(22);
-    doc.text('BUDGET REQUEST VOUCHER', 105, 25, { align: 'center' });
-    
-    // Add Content
-    doc.setTextColor(20, 20, 20);
-    doc.setFontSize(10);
-    doc.text(`Voucher Date: ${new Date().toLocaleDateString()}`, 14, 50);
-    doc.text(`Request Code: ${req.request_code}`, 14, 55);
-    
-    doc.setDrawColor(200, 200, 200);
-    doc.line(14, 62, 196, 62);
-    
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.text('REQUEST DETAILS', 14, 72);
-    
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.text('Item Name:', 14, 82);
-    doc.text(req.item_name, 60, 82);
-    
-    doc.text('Category:', 14, 88);
-    doc.text(req.category, 60, 88);
-    
-    doc.text('Amount:', 14, 94);
-    doc.text(`PHP ${Number(req.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 60, 94);
-    
-    doc.text('Department:', 14, 100);
-    doc.text(req.department_name || 'N/A', 60, 100);
-    
-    doc.text('Priority:', 14, 106);
-    doc.text(req.priority.toUpperCase(), 60, 106);
-    
-    doc.text('Purpose:', 14, 112);
-    const splitPurpose = doc.splitTextToSize(req.purpose || 'No purpose provided.', 130);
-    doc.text(splitPurpose, 60, 112);
-    
-    // Approval Section
-    const approvalY = 112 + (splitPurpose.length * 5) + 15;
-    doc.setFont('helvetica', 'bold');
-    doc.text('APPROVAL STATUS', 14, approvalY);
-    
-    doc.setFont('helvetica', 'normal');
-    doc.text('Current Status:', 14, approvalY + 10);
-    doc.setTextColor(16, 185, 129); // Emerald color
-    doc.text(getStatusLabel(req.status).toUpperCase(), 60, approvalY + 10);
-    
-    doc.setTextColor(20, 20, 20);
-    doc.text('Approval Date:', 14, approvalY + 16);
-    doc.text(req.updated_at ? new Date(req.updated_at).toLocaleString() : 'N/A', 60, approvalY + 16);
-    
-    // Footer / Signatures
-    doc.setDrawColor(200, 200, 200);
-    doc.line(14, 250, 80, 250);
-    doc.line(130, 250, 196, 250);
-    doc.setFontSize(8);
-    doc.text('Requested By', 47, 255, { align: 'center' });
-    doc.text('Approved By (System Verified)', 163, 255, { align: 'center' });
-    
-    doc.setFontSize(7);
-    doc.setTextColor(150, 150, 150);
-    doc.text('This is a system-generated document. No signature required if status is APPROVED/RELEASED.', 105, 285, { align: 'center' });
-    
-    doc.save(`Voucher_${req.request_code}.pdf`);
-    toast.success('Voucher downloaded successfully!');
+    try {
+      const doc = new jsPDF();
+      
+      // Add Logo or Header
+      doc.setFillColor(30, 43, 74);
+      doc.rect(0, 0, 210, 40, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(22);
+      doc.text('BUDGET REQUEST VOUCHER', 105, 25, { align: 'center' });
+      
+      // Add Content
+      doc.setTextColor(20, 20, 20);
+      doc.setFontSize(10);
+      doc.text(`Voucher Date: ${new Date().toLocaleDateString()}`, 14, 50);
+      doc.text(`Expense No: ${req.request_code}`, 14, 55);
+      
+      doc.setDrawColor(200, 200, 200);
+      doc.line(14, 62, 196, 62);
+      
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('REQUEST DETAILS', 14, 72);
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.text('Item Name:', 14, 82);
+      doc.text(req.item_name, 60, 82);
+      
+      doc.text('Category:', 14, 88);
+      doc.text(req.category, 60, 88);
+      
+      doc.text('Amount:', 14, 94);
+      doc.text(`PHP ${Number(req.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 60, 94);
+      
+      doc.text('Department:', 14, 100);
+      doc.text(req.department_name || 'N/A', 60, 100);
+      
+      doc.text('Priority:', 14, 106);
+      doc.text(req.priority.toUpperCase(), 60, 106);
+      
+      doc.text('Purpose:', 14, 112);
+      const splitPurpose = doc.splitTextToSize(req.purpose || 'No purpose provided.', 130);
+      doc.text(splitPurpose, 60, 112);
+      
+      // Approval Section
+      const approvalY = 112 + (splitPurpose.length * 5) + 15;
+      doc.setFont('helvetica', 'bold');
+      doc.text('APPROVAL STATUS', 14, approvalY);
+      
+      doc.setFont('helvetica', 'normal');
+      doc.text('Current Status:', 14, approvalY + 10);
+      doc.setTextColor(16, 185, 129); // Emerald color
+      doc.text(getStatusLabel(req.status).toUpperCase(), 60, approvalY + 10);
+      
+      doc.setTextColor(20, 20, 20);
+      doc.text('Approval Date:', 14, approvalY + 16);
+      doc.text(req.updated_at ? formatDateTime(req.updated_at) : 'N/A', 60, approvalY + 16);
+      
+      // Footer / Signatures
+      doc.setDrawColor(200, 200, 200);
+      doc.line(14, 250, 80, 250);
+      doc.line(130, 250, 196, 250);
+      doc.setFontSize(8);
+      doc.text('Requested By', 47, 255, { align: 'center' });
+      doc.text('Approved By (System Verified)', 163, 255, { align: 'center' });
+      
+      doc.setFontSize(7);
+      doc.setTextColor(150, 150, 150);
+      doc.text('This is a system-generated document. No signature required if status is APPROVED/DISBURSED.', 105, 285, { align: 'center' });
+      
+      doc.save(`Voucher_${req.request_code}.pdf`);
+      toast.success('Voucher downloaded successfully!');
+    } catch (err: any) {
+      console.error('Voucher download error:', err);
+      toast.error('Failed to generate voucher. Please try again.');
+    }
   };
+
+  // Fetch audit logs for selected request
+  const fetchAuditLogs = async (requestId: string) => {
+    setAuditLoading(true);
+    const token = localStorage.getItem('token');
+    try {
+      const res = await api.get(`/api/requests/${requestId}/audit-logs`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setAuditLogs(res.data || []);
+    } catch (err: any) {
+      toast.error('Failed to load audit trail');
+      setAuditLogs([]);
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  // Format audit action for display
+  const formatAuditAction = (action: string) => {
+    const labels: Record<string, string> = {
+      'submitted': 'Submitted',
+      'approved': 'Approved',
+      'rejected': 'Rejected',
+      'returned': 'Returned',
+      'released': 'Fund Disbursed',
+      'on_hold': 'On Hold',
+      'off_hold': 'Resumed',
+      'status_changed': 'Status Update',
+      'liquidation_submitted': 'Liquidation Sent',
+      'co_approved': 'Co-Approved',
+      'archived': 'Archived',
+      'unarchived': 'Unarchived'
+    };
+    return labels[action] || action;
+  };
+
+  const getAuditIcon = (action: string) => {
+    switch (action) {
+      case 'submitted':
+        return (
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+        );
+      case 'approved':
+      case 'co_approved':
+        return (
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+        );
+      case 'rejected':
+      case 'returned':
+        return (
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        );
+      case 'released':
+        return (
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        );
+      case 'liquidation_submitted':
+        return (
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+          </svg>
+        );
+      default:
+        return (
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        );
+    }
+  };
+
+  const paginatedAuditLogs = useMemo(() => {
+    const start = (auditPage - 1) * auditPageSize;
+    return auditLogs.slice(start, start + auditPageSize);
+  }, [auditLogs, auditPage]);
+
+  const totalAuditPages = Math.ceil(auditLogs.length / auditPageSize);
 
   return (
     <div className="text-[var(--role-text)]">
@@ -305,7 +446,7 @@ const RequestTracker = () => {
               <input
                 type="text"
                 className="field-input"
-                placeholder="Search by item, code, category..."
+                placeholder="Search by item, expense no, category..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
               />
@@ -315,7 +456,7 @@ const RequestTracker = () => {
               <option value="pending_supervisor">Pending Supervisor</option>
               <option value="pending_accounting">Pending Accounting</option>
               <option value="approved">Approved</option>
-              <option value="released">Released</option>
+              <option value="released">Disbursed</option>
               <option value="rejected">Rejected</option>
               <option value="returned_for_revision">Returned</option>
             </select>
@@ -429,7 +570,7 @@ const RequestTracker = () => {
           ))}
           
           {/* Pagination */}
-          {totalPages > 1 && (
+          {filteredRequests.length > 0 && (
             <div className="flex items-center justify-between pt-4 border-t border-[var(--role-border)]">
               <p className="text-sm text-[var(--role-text)]/60">
                 Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, filteredRequests.length)} of {filteredRequests.length} requests
@@ -568,7 +709,7 @@ const RequestTracker = () => {
                 <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/50 font-bold">Latest Liquidation</p>
                 <p className="mt-2 text-lg font-bold capitalize text-[var(--role-text)]">{selectedRequest.latest_liquidation.status.replace(/_/g, ' ')}</p>
                 <p className="mt-2 text-sm text-[var(--role-text)]/70">
-                  Due: {selectedRequest.latest_liquidation.due_at ? new Date(selectedRequest.latest_liquidation.due_at).toLocaleString() : 'No due date'}
+                  Due: {selectedRequest.latest_liquidation.due_at ? formatDateTime(selectedRequest.latest_liquidation.due_at) : 'No due date'}
                 </p>
                 <p className="mt-1 text-sm text-[var(--role-text)]/70">
                   Actual amount: {selectedRequest.latest_liquidation.actual_amount ? formatMoney(toNumber(selectedRequest.latest_liquidation.actual_amount)) : 'Not submitted'}
@@ -621,6 +762,104 @@ const RequestTracker = () => {
               </div>
             </div>
 
+            {/* Audit Trail Section - Transparency */}
+            <div className="mt-6">
+              <h3 className="text-xl font-bold text-[var(--role-text)]">Audit Trail</h3>
+              <p className="text-sm text-[var(--role-text)]/60 mt-1">
+                Complete history of all actions with digital signatures
+              </p>
+              
+              <div className="mt-4 rounded-[24px] border border-[var(--role-border)] bg-[var(--role-accent)] p-4">
+                {auditLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="animate-spin h-6 w-6 border-2 border-[var(--role-primary)] border-t-transparent rounded-full" />
+                    <span className="ml-3 text-sm text-[var(--role-text)]/70">Loading audit trail...</span>
+                  </div>
+                ) : auditLogs.length === 0 ? (
+                  <p className="text-center py-4 text-[var(--role-text)]/60">No audit records found</p>
+                ) : (
+                  <>
+                    <div className="space-y-3">
+                      {paginatedAuditLogs.map((log: any, index: number) => (
+                        <div key={log.id || index} className="flex gap-4">
+                          <div className="flex flex-col items-center">
+                            <div className="mt-1.5 h-3 w-3 rounded-full bg-[var(--role-primary)]" />
+                            {index !== paginatedAuditLogs.length - 1 && <div className="mt-2 h-full min-h-[28px] w-px bg-[var(--role-border)]" />}
+                          </div>
+                          <div className="panel-muted w-full bg-white/40">
+                            <div className="flex justify-between items-start">
+                              <div className="flex items-center gap-2 font-bold text-[var(--role-text)]">
+                                <span className="text-[var(--role-primary)]">
+                                  {getAuditIcon(log.action)}
+                                </span>
+                                {formatAuditAction(log.action)}
+                              </div>
+                              <span className="text-xs text-[var(--role-text)]/50">
+                                {formatDateTime(log.created_at)}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-sm text-[var(--role-text)]/70">
+                              By: <span className="font-medium">{log.user?.name || 'Unknown'}</span>
+                              {log.user?.role && <span className="text-xs ml-2 px-2 py-0.5 rounded-full bg-[var(--role-border)]/30">{log.user.role}</span>}
+                            </p>
+                            {log.note && (
+                              <p className="mt-2 text-sm text-[var(--role-text)]/80 italic">"{log.note}"</p>
+                            )}
+                            {log.old_value && log.new_value && (
+                              <p className="mt-1 text-xs text-[var(--role-text)]/60">
+                                {log.old_value} → {log.new_value}
+                              </p>
+                            )}
+                            {log.digital_signature && (
+                              <div className="mt-2 flex items-center gap-2 text-xs text-emerald-600">
+                                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                                </svg>
+                                <span className="font-mono">Digital Signature: {log.digital_signature.substring(0, 16)}...</span>
+                              </div>
+                            )}
+                            <p className="mt-1 text-xs text-[var(--role-text)]/40">
+                              IP: {log.ip_address} | Device: {log.device_fingerprint?.substring(0, 8) || 'Unknown'}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    
+                    {totalAuditPages > 1 && (
+                      <div className="mt-4 flex items-center justify-between border-t border-[var(--role-border)]/20 pt-4">
+                        <span className="text-xs text-[var(--role-text)]/50">
+                          Page {auditPage} of {totalAuditPages}
+                        </span>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setAuditPage(p => Math.max(1, p - 1))}
+                            disabled={auditPage === 1}
+                            className="flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--role-border)] bg-white/50 text-xs font-bold disabled:opacity-30 hover:bg-white transition"
+                          >
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                            </svg>
+                            PREV
+                          </button>
+                          <button
+                            onClick={() => setAuditPage(p => Math.min(totalAuditPages, p + 1))}
+                            disabled={auditPage === totalAuditPages}
+                            className="flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--role-border)] bg-white/50 text-xs font-bold disabled:opacity-30 hover:bg-white transition"
+                          >
+                            NEXT
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+
             {selectedRequest.rejection_reason && (
               <div className="panel-muted mt-6 border-red-500/20 bg-red-500/5">
                 <p className="text-xs uppercase tracking-[0.16em] text-red-600 font-bold">Rejection Reason</p>
@@ -645,9 +884,37 @@ const RequestTracker = () => {
               </div>
             )}
 
-            {selectedRequest.status === 'released' && (
+            {selectedRequest.status === 'released' && selectedRequest.latest_liquidation?.status === 'submitted' && (
+              <div className="panel-muted mt-6 border-blue-500/20 bg-blue-500/5">
+                <p className="text-xs uppercase tracking-[0.16em] text-blue-600 font-bold">Liquidation Under Review</p>
+                <p className="mt-2 text-sm text-blue-700">Your liquidation has been submitted and is being reviewed by accounting. Actual amount: <strong>{selectedRequest.latest_liquidation.actual_amount}</strong></p>
+              </div>
+            )}
+
+            {selectedRequest.status === 'released' && selectedRequest.latest_liquidation?.status === 'verified' && (
+              <div className="panel-muted mt-6 border-green-500/20 bg-green-500/5">
+                <p className="text-xs uppercase tracking-[0.16em] text-green-600 font-bold">Liquidation Verified</p>
+                <p className="mt-2 text-sm text-green-700">Your liquidation has been verified by accounting.</p>
+                {selectedRequest.latest_liquidation.remarks && (
+                  <p className="mt-1 text-xs text-green-600/70">Remarks: {selectedRequest.latest_liquidation.remarks}</p>
+                )}
+              </div>
+            )}
+
+            {selectedRequest.status === 'released' && selectedRequest.latest_liquidation?.status === 'returned' && (
+              <div className="panel-muted mt-6 border-orange-500/20 bg-orange-500/5">
+                <p className="text-xs uppercase tracking-[0.16em] text-orange-600 font-bold">Liquidation Returned for Correction</p>
+                {selectedRequest.latest_liquidation.remarks && (
+                  <p className="mt-2 text-sm text-orange-700">Remarks: {selectedRequest.latest_liquidation.remarks}</p>
+                )}
+              </div>
+            )}
+
+            {selectedRequest.status === 'released' && (!selectedRequest.latest_liquidation || selectedRequest.latest_liquidation.status === 'returned') && (
               <div className="panel-muted mt-6 bg-white/40">
-                <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/50 font-bold">Submit Liquidation</p>
+                <p className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/50 font-bold">
+                  {selectedRequest.latest_liquidation?.status === 'returned' ? 'Resubmit Liquidation' : 'Submit Liquidation'}
+                </p>
                 <div className="mt-4 grid grid-cols-1 gap-3">
                   <input
                     type="number"
@@ -665,10 +932,40 @@ const RequestTracker = () => {
                   />
                   
                   <div className="flex flex-col gap-3">
-                    <label className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/50 font-bold">Attach Official Receipt / Image</label>
+                    <label className="text-xs uppercase tracking-[0.16em] text-[var(--role-text)]/50 font-bold">Attach Official Receipt / Images</label>
+                    
+                    {/* Multi-attachment list */}
+                    {liquidationDraft.attachments.length > 0 && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-2">
+                        {liquidationDraft.attachments.map((att, idx) => (
+                          <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-[var(--role-accent)] border border-[var(--role-border)]">
+                            <div className="flex items-center gap-2 overflow-hidden">
+                              <svg className="w-5 h-5 text-[var(--role-primary)] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                              </svg>
+                              <span className="text-xs truncate">{att.file_name}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newAtts = liquidationDraft.attachments.filter((_, i) => i !== idx);
+                                setLiquidationDraft(prev => ({ ...prev, attachments: newAtts }));
+                              }}
+                              className="p-1 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     <div className="relative">
                       <input
                         type="file"
+                        multiple
                         accept="image/*"
                         onChange={handleFileChange}
                         className="hidden"
@@ -684,17 +981,30 @@ const RequestTracker = () => {
                           </svg>
                         </div>
                         <span className="font-semibold text-[var(--role-text)]">
-                          {liquidationDraft.file_url ? 'Change Image' : 'Click to Upload Receipt'}
+                          Click to Add Images / Receipts
                         </span>
                       </label>
                     </div>
-                    {liquidationDraft.file_url && (
-                      <div className="mt-2 overflow-hidden rounded-2xl border border-[var(--role-border)]/20">
-                        <img 
-                          src={liquidationDraft.file_url} 
-                          alt="Liquidation attachment" 
-                          className="h-auto max-h-[200px] w-full object-contain bg-[var(--role-border)]/10" 
-                        />
+                    
+                    {liquidationDraft.attachments.length > 0 && (
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        {liquidationDraft.attachments.slice(0, 4).map((att, i) => (
+                          <div key={i} className="aspect-video relative group overflow-hidden rounded-xl border border-[var(--role-border)]/20 bg-[var(--role-border)]/10">
+                            <img 
+                              src={att.file_url} 
+                              alt="Preview" 
+                              className="h-full w-full object-cover" 
+                            />
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                              <button 
+                                onClick={() => setPreviewFile({ url: att.file_url, name: att.file_name })}
+                                className="text-white text-xs font-bold"
+                              >
+                                View
+                              </button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>

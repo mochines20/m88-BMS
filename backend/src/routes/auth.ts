@@ -206,18 +206,40 @@ const resolveSignupDepartment = async (departmentIdOrName: string) => {
 
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
-  const { password } = req.body;
-  const email = normalizeEmail(req.body?.email);
-  const { data: user, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('email', email)
-    .single();
-  if (error || !user) return res.status(400).json({ error: 'Invalid credentials' });
-  const valid = await bcrypt.compare(password, user.password_hash);
-  if (!valid) return res.status(400).json({ error: 'Invalid credentials' });
-  const token = jwt.sign({ id: user.id, role: user.role, department_id: user.department_id }, process.env.JWT_SECRET!, { expiresIn: '1h' });
-  res.json({ token, user: { id: user.id, name: user.name, role: user.role } });
+  try {
+    const { password } = req.body;
+    const email = normalizeEmail(req.body?.email);
+    console.log('Login attempt for email:', email);
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (error || !user) {
+      console.log('Login failed: User not found:', email);
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      console.log('Login failed: Password mismatch for email:', email);
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, role: user.role, department_id: user.department_id }, 
+      process.env.JWT_SECRET!, 
+      { expiresIn: '1h' }
+    );
+
+    console.log('Login successful for email:', email);
+    res.json({ token, user: { id: user.id, name: user.name, role: user.role } });
+  } catch (err: any) {
+    console.error('CRITICAL LOGIN ERROR:', err);
+    res.status(500).json({ error: 'Internal server error during login' });
+  }
 });
 
 // POST /api/auth/forgot-password
@@ -418,8 +440,9 @@ router.get('/signup-departments', async (_req, res) => {
 
 // PATCH /api/auth/profile
 router.patch('/profile', authenticate, async (req: any, res) => {
-  if (req.user.role !== 'employee' && req.user.role !== 'manager' && req.user.role !== 'supervisor') {
-    return res.status(403).json({ error: 'Only employees, managers, and supervisors can update their own department.' });
+  const allowedRoles = ['employee', 'manager', 'supervisor', 'vp', 'president'];
+  if (!allowedRoles.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Profile self-edit is not available for your role.' });
   }
 
   const { name, department_id } = req.body as {
@@ -430,30 +453,37 @@ router.patch('/profile', authenticate, async (req: any, res) => {
   const normalizedName = String(name || '').trim();
   const normalizedDepartmentId = String(department_id || '').trim();
 
-  if (!normalizedName || !normalizedDepartmentId) {
-    return res.status(400).json({ error: 'Name and department are required.' });
+  if (!normalizedName) {
+    return res.status(400).json({ error: 'Name is required.' });
   }
 
-  const { data: department, error: departmentError } = await resolveSignupDepartment(normalizedDepartmentId);
-  if (departmentError || !department) {
-    return res.status(400).json({ error: departmentError || 'Selected department was not found.' });
+  // VP and President don't require a department
+  const requiresDepartment = req.user.role !== 'vp' && req.user.role !== 'president';
+  if (requiresDepartment && !normalizedDepartmentId) {
+    return res.status(400).json({ error: 'Department is required.' });
   }
 
-  if (req.user.role === 'employee' || req.user.role === 'manager' || req.user.role === 'supervisor') {
+  let resolvedDepartmentId: string | null = req.user.department_id || null;
+
+  if (requiresDepartment) {
+    const { data: department, error: departmentError } = await resolveSignupDepartment(normalizedDepartmentId);
+    if (departmentError || !department) {
+      return res.status(400).json({ error: departmentError || 'Selected department was not found.' });
+    }
     const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
     const accessibleDepartmentIds = await getAccessibleDepartmentIdsForUser(supabase, req.user, activeFiscalYear);
     if (!accessibleDepartmentIds.includes(department.id)) {
       return res.status(403).json({ error: 'You are not allowed to change to that department.' });
     }
+    resolvedDepartmentId = department.id;
   }
+
+  const updatePayload: any = { name: normalizedName, updated_at: new Date() };
+  if (resolvedDepartmentId) updatePayload.department_id = resolvedDepartmentId;
 
   const { data: updatedUser, error } = await supabase
     .from('users')
-    .update({
-      name: normalizedName,
-      department_id: department.id,
-      updated_at: new Date()
-    })
+    .update(updatePayload)
     .eq('id', req.user.id)
     .select('id, name, email, role, department_id')
     .single();
@@ -462,22 +492,27 @@ router.patch('/profile', authenticate, async (req: any, res) => {
     return res.status(400).json({ error: error || 'Failed to update profile' });
   }
 
-  await Promise.all([
-    supabase
-      .from('expense_requests')
-      .update({
-        department_id: department.id,
-        fiscal_year: department.fiscal_year,
-        updated_at: new Date()
-      })
-      .eq('employee_id', req.user.id),
-    supabase
-      .from('direct_expenses')
-      .update({
-        department_id: department.id
-      })
-      .eq('logged_by', req.user.id)
-  ]);
+  if (resolvedDepartmentId && resolvedDepartmentId !== req.user.department_id) {
+    const { data: resolvedDept } = await supabase
+      .from('departments')
+      .select('id, fiscal_year')
+      .eq('id', resolvedDepartmentId)
+      .single();
+    await Promise.all([
+      supabase
+        .from('expense_requests')
+        .update({
+          department_id: resolvedDepartmentId,
+          fiscal_year: resolvedDept?.fiscal_year ?? null,
+          updated_at: new Date()
+        })
+        .eq('employee_id', req.user.id),
+      supabase
+        .from('direct_expenses')
+        .update({ department_id: resolvedDepartmentId })
+        .eq('logged_by', req.user.id)
+    ]);
+  }
 
   const token = jwt.sign(
     { id: updatedUser.id, role: updatedUser.role, department_id: updatedUser.department_id },
@@ -567,7 +602,7 @@ router.post('/signup', async (req, res) => {
 
 // GET /api/auth/users
 router.get('/users', authenticate, async (req: any, res) => {
-  if (req.user.role !== 'super_admin') {
+  if (req.user.role !== 'super_admin' && req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -598,7 +633,7 @@ router.get('/users', authenticate, async (req: any, res) => {
 
 // PATCH /api/auth/users/:id
 router.patch('/users/:id', authenticate, async (req: any, res) => {
-  if (req.user.role !== 'super_admin') {
+  if (req.user.role !== 'super_admin' && req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -610,7 +645,7 @@ router.patch('/users/:id', authenticate, async (req: any, res) => {
     return res.status(400).json({ error: 'Name and role are required.' });
   }
 
-  if (!['employee', 'manager', 'supervisor', 'accounting', 'management', 'admin', 'super_admin'].includes(normalizedRole)) {
+  if (!['employee', 'manager', 'supervisor', 'accounting', 'management', 'admin', 'super_admin', 'vp', 'president'].includes(normalizedRole)) {
     console.log('Role validation failed for:', normalizedRole);
     return res.status(400).json({ error: 'Invalid role.' });
   }
@@ -623,7 +658,7 @@ router.patch('/users/:id', authenticate, async (req: any, res) => {
 
   if (normalizedDepartmentId && normalizedDepartmentId !== 'null' && normalizedDepartmentId !== '') {
     payload.department_id = normalizedDepartmentId;
-  } else if (normalizedRole === 'super_admin' || normalizedRole === 'management') {
+  } else if (normalizedRole === 'super_admin' || normalizedRole === 'management' || normalizedRole === 'vp' || normalizedRole === 'president') {
     payload.department_id = null;
   } else {
     return res.status(400).json({ error: 'Department is required for this role.' });
@@ -642,7 +677,7 @@ router.patch('/users/:id', authenticate, async (req: any, res) => {
 
 // DELETE /api/auth/users/:id
 router.delete('/users/:id', authenticate, async (req: any, res) => {
-  if (req.user.role !== 'super_admin') {
+  if (req.user.role !== 'super_admin' && req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Forbidden' });
   }
 

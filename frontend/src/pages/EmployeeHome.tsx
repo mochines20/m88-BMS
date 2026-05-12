@@ -74,17 +74,18 @@ const EmployeeHome = () => {
 
     const loadData = async () => {
       try {
-        const [userRes, requestsRes, advancesRes] = await Promise.all([
+        const [userRes, requestsRes] = await Promise.all([
           api.get('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } }),
           api.get('/api/requests/my', { headers: { Authorization: `Bearer ${token}` } }),
-          api.get(`/api/cash-advances/employee/${JSON.parse(atob(token.split('.')[1])).id}`, { 
-            headers: { Authorization: `Bearer ${token}` } 
-          }).catch(() => ({ data: [] }))
         ]);
 
         setUser(userRes.data);
         setMyRequests(requestsRes.data || []);
-        setMyCashAdvances(advancesRes.data || []);
+
+        const advancesRes = await api.get(`/api/cash-advances/employee/${userRes.data.id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }).catch(() => ({ data: [] }));
+        setMyCashAdvances((advancesRes as any).data || []);
       } catch (err) {
         toast.error('Failed to load data');
       } finally {
@@ -121,100 +122,6 @@ const EmployeeHome = () => {
         <p className="page-subtitle">Submit and track your expense requests</p>
       </div>
 
-      {/* Quick Stats Bar */}
-      {(() => {
-        const totalSubmitted = myRequests.length;
-        const totalApproved = myRequests.filter(r => r.status === 'approved' || r.status === 'released').length;
-        const pendingCount = myRequests.filter(r => ['pending_supervisor', 'pending_accounting'].includes(r.status)).length;
-        const currentMonthAmount = myRequests
-          .filter(r => {
-            const submittedDate = new Date(r.submitted_at);
-            const now = new Date();
-            return submittedDate.getMonth() === now.getMonth() && 
-                   submittedDate.getFullYear() === now.getFullYear() &&
-                   (r.status === 'approved' || r.status === 'released');
-          })
-          .reduce((sum, r) => sum + toNumber(r.amount), 0);
-        
-        return (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div className="panel !p-4">
-              <p className="text-xs text-[var(--role-text)]/60 uppercase tracking-wider">Total Submitted</p>
-              <p className="text-2xl font-bold text-[var(--role-primary)]">{totalSubmitted}</p>
-            </div>
-            <div className="panel !p-4">
-              <p className="text-xs text-[var(--role-text)]/60 uppercase tracking-wider">Approved</p>
-              <p className="text-2xl font-bold text-emerald-600">{totalApproved}</p>
-            </div>
-            <div className="panel !p-4">
-              <p className="text-xs text-[var(--role-text)]/60 uppercase tracking-wider">Pending</p>
-              <p className="text-2xl font-bold text-amber-600">{pendingCount}</p>
-            </div>
-            <div className="panel !p-4">
-              <p className="text-xs text-[var(--role-text)]/60 uppercase tracking-wider">This Month</p>
-              <p className="text-xl font-bold text-[var(--role-secondary)]">{formatMoney(currentMonthAmount)}</p>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Quick Action Buttons */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <button
-          onClick={() => navigate('/requests/new?type=reimbursement')}
-          className="panel group hover:border-[var(--role-primary)]/50 transition-all duration-300 text-left"
-        >
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" />
-              </svg>
-            </div>
-            <div>
-              <p className="font-semibold text-lg">Submit Reimbursement</p>
-              <p className="text-sm text-[var(--role-text)]/60">Request reimbursement for expenses</p>
-            </div>
-          </div>
-        </button>
-
-        <button
-          onClick={() => navigate('/requests/new?type=cash_advance')}
-          className="panel group hover:border-[var(--role-primary)]/50 transition-all duration-300 text-left"
-        >
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div>
-              <p className="font-semibold text-lg">Request Cash Advance</p>
-              <p className="text-sm text-[var(--role-text)]/60">Request funds before spending</p>
-            </div>
-          </div>
-        </button>
-
-        <button
-          onClick={() => outstandingCashAdvances.length > 0 ? handleLiquidateClick(outstandingCashAdvances[0].id) : toast('No outstanding cash advances to liquidate')}
-          className={`panel group transition-all duration-300 text-left ${outstandingCashAdvances.length > 0 ? 'hover:border-[var(--role-primary)]/50' : 'opacity-60'}`}
-        >
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center group-hover:scale-110 transition-transform">
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-              </svg>
-            </div>
-            <div>
-              <p className="font-semibold text-lg">Liquidate Cash Advance</p>
-              <p className="text-sm text-[var(--role-text)]/60">
-                {outstandingCashAdvances.length > 0 
-                  ? `${outstandingCashAdvances.length} outstanding advance(s)` 
-                  : 'No advances to liquidate'}
-              </p>
-            </div>
-          </div>
-        </button>
-      </div>
 
       {/* Outstanding Cash Advances Section */}
       {outstandingCashAdvances.length > 0 && (
@@ -268,7 +175,7 @@ const EmployeeHome = () => {
             My Requests
           </h2>
           <button 
-            onClick={() => navigate('/requests')}
+            onClick={() => navigate('/tracker')}
             className="text-sm text-[var(--role-primary)] hover:underline"
           >
             View All →
@@ -291,6 +198,7 @@ const EmployeeHome = () => {
                   <th className="pb-3 font-medium">Type</th>
                   <th className="pb-3 font-medium">Ref No</th>
                   <th className="pb-3 font-medium">Description</th>
+                  <th className="pb-3 font-medium">Date</th>
                   <th className="pb-3 font-medium">Status</th>
                   <th className="pb-3 font-medium text-right">Amount</th>
                 </tr>
@@ -300,7 +208,7 @@ const EmployeeHome = () => {
                   <tr 
                     key={req.id} 
                     className="hover:bg-[var(--role-accent)]/30 transition-colors cursor-pointer"
-                    onClick={() => navigate(`/requests/${req.id}`)}
+                    onClick={() => navigate('/tracker')}
                   >
                     <td className="py-3">
                       <span className="text-sm">{getRequestTypeLabel(req.request_type || 'reimbursement')}</span>
@@ -310,6 +218,9 @@ const EmployeeHome = () => {
                     </td>
                     <td className="py-3">
                       <span className="text-sm text-[var(--role-text)]/80">{req.item_name}</span>
+                    </td>
+                    <td className="py-3">
+                      <span className="text-xs text-[var(--role-text)]/60">{new Date(req.submitted_at).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                     </td>
                     <td className="py-3">
                       <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(req.status)}`}>

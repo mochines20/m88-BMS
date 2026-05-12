@@ -6,6 +6,39 @@ import { getLatestConfiguredFiscalYear } from '../utils/fiscal';
 const router = Router();
 const toNumber = (value: any) => Number.parseFloat(value ?? 0) || 0;
 
+const syncDepartmentBudget = async (department_id: string, fiscal_year: number) => {
+  // Get all categories for this department (by ID)
+  const { data: cats } = await supabase
+    .from('budget_categories')
+    .select('budget_amount')
+    .eq('department_id', department_id)
+    .eq('fiscal_year', fiscal_year);
+  const total = (cats || []).reduce((s: number, c: any) => s + toNumber(c.budget_amount), 0);
+
+  // Get the department name so we can update ALL duplicate rows with the same name+FY
+  const { data: dept } = await supabase
+    .from('departments')
+    .select('name')
+    .eq('id', department_id)
+    .single();
+
+  if (dept?.name) {
+    // Update all rows matching this name+FY (handles duplicates)
+    await supabase
+      .from('departments')
+      .update({ annual_budget: total, updated_at: new Date() })
+      .ilike('name', dept.name)
+      .eq('fiscal_year', fiscal_year);
+  } else {
+    // Fallback: update just by ID
+    await supabase
+      .from('departments')
+      .update({ annual_budget: total, updated_at: new Date() })
+      .eq('id', department_id);
+  }
+  return total;
+};
+
 // GET /api/budget/categories - Get budget categories for a department
 router.get('/categories', authenticate, async (req: any, res) => {
   try {
@@ -18,8 +51,12 @@ router.get('/categories', authenticate, async (req: any, res) => {
       .select('*')
       .eq('fiscal_year', targetFiscalYear);
 
-    if (department_id) {
+    if (department_id && department_id !== '') {
       query = query.eq('department_id', department_id);
+    } else if (req.user?.role !== 'admin' && req.user?.role !== 'super_admin' && req.user?.role !== 'accounting') {
+      // Regular users MUST provide a department_id or have one in their token
+      // If no department is provided and they aren't admin, return empty
+      return res.json([]);
     }
 
     const { data, error } = await query.order('category_name');
@@ -37,6 +74,7 @@ router.post('/categories', authenticate, authorize('accounting', 'admin', 'super
     const { department_id, category_code, category_name, budget_amount, fiscal_year } = req.body;
     const activeFiscalYear = await getLatestConfiguredFiscalYear(supabase);
     const requestedBudget = toNumber(budget_amount);
+
 
     const [{ data: department, error: departmentError }, { data: existingCategories, error: categoriesError }] = await Promise.all([
       supabase
@@ -57,20 +95,13 @@ router.post('/categories', authenticate, authorize('accounting', 'admin', 'super
 
     if (categoriesError) throw categoriesError;
 
-    const annualBudget = toNumber(department.annual_budget);
-    const allocatedBudget = (existingCategories || []).reduce((sum: number, category: any) => sum + toNumber(category.budget_amount), 0);
-
-    if (allocatedBudget + requestedBudget > annualBudget) {
-      return res.status(400).json({
-        error: `Category allocation exceeds department budget. Available to allocate: ${Math.max(0, annualBudget - allocatedBudget).toFixed(2)}`
-      });
-    }
+    const targetFY = toNumber(fiscal_year || activeFiscalYear);
 
     const { data, error } = await supabase
       .from('budget_categories')
       .insert({
         department_id,
-        fiscal_year: fiscal_year || activeFiscalYear,
+        fiscal_year: targetFY,
         category_code: category_code.toUpperCase(),
         category_name,
         budget_amount: requestedBudget,
@@ -82,6 +113,9 @@ router.post('/categories', authenticate, authorize('accounting', 'admin', 'super
       .single();
 
     if (error) throw error;
+
+    await syncDepartmentBudget(department_id, targetFY);
+
     res.json(data);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -109,37 +143,7 @@ router.put('/categories/:id', authenticate, authorize('accounting', 'admin', 'su
     const usedAmount = toNumber(current.used_amount);
     const committedAmount = toNumber(current.committed_amount);
 
-    const [{ data: department, error: departmentError }, { data: siblingCategories, error: siblingCategoriesError }] = await Promise.all([
-      supabase
-        .from('departments')
-        .select('id, annual_budget')
-        .eq('id', current.department_id)
-        .single(),
-      supabase
-        .from('budget_categories')
-        .select('id, budget_amount')
-        .eq('department_id', current.department_id)
-        .eq('fiscal_year', current.fiscal_year)
-    ]);
-
-    if (departmentError || !department) {
-      return res.status(404).json({ error: 'Department not found' });
-    }
-
-    if (siblingCategoriesError) throw siblingCategoriesError;
-
-    const otherAllocatedBudget = (siblingCategories || [])
-      .filter((category: any) => category.id !== id)
-      .reduce((sum: number, category: any) => sum + toNumber(category.budget_amount), 0);
-    const annualBudget = toNumber(department.annual_budget);
-
-    if (otherAllocatedBudget + requestedBudget > annualBudget) {
-      return res.status(400).json({
-        error: `Category allocation exceeds department budget. Available to allocate: ${Math.max(0, annualBudget - otherAllocatedBudget).toFixed(2)}`
-      });
-    }
-
-    const newRemaining = requestedBudget - usedAmount - committedAmount;
+    const newRemaining = Math.max(0, requestedBudget - usedAmount - committedAmount);
 
     const { data, error } = await supabase
       .from('budget_categories')
@@ -154,7 +158,46 @@ router.put('/categories/:id', authenticate, authorize('accounting', 'admin', 'su
       .single();
 
     if (error) throw error;
+
+    await syncDepartmentBudget(current.department_id, current.fiscal_year);
+
     res.json(data);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// DELETE /api/budget/categories/:id - Delete budget category
+router.delete('/categories/:id', authenticate, authorize('accounting', 'admin', 'super_admin'), async (req: any, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data: current } = await supabase
+      .from('budget_categories')
+      .select('id, used_amount, committed_amount, category_name, department_id, fiscal_year')
+      .eq('id', id)
+      .single();
+
+    if (!current) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+
+    if (toNumber(current.used_amount) > 0 || toNumber(current.committed_amount) > 0) {
+      return res.status(400).json({
+        error: `Cannot delete category "${current.category_name}" — it has existing used or committed budget amounts. Zero out the amounts first.`
+      });
+    }
+
+    const { error } = await supabase
+      .from('budget_categories')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+
+    await syncDepartmentBudget(current.department_id as string, current.fiscal_year as number);
+
+    res.json({ success: true });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
@@ -256,7 +299,7 @@ router.get('/monitoring', authenticate, authorize('accounting', 'admin', 'super_
         department_id
       `)
       .eq('fiscal_year', targetFiscalYear)
-      .in('status', ['pending_accounting', 'approved', 'on_hold'])
+      .in('status', ['pending_supervisor', 'pending_accounting', 'approved', 'on_hold'])
       .not('category_id', 'is', null);
 
     if (comError) throw comError;
@@ -306,16 +349,15 @@ router.post('/setup', authenticate, authorize('accounting', 'admin', 'super_admi
       for (const cat of dept.categories) {
         const { data, error } = await supabase
           .from('budget_categories')
-          .insert({
+          .upsert({
             department_id: dept.department_id,
             fiscal_year: targetYear,
             category_code: cat.category_code.toUpperCase(),
             category_name: cat.category_name,
             budget_amount: cat.budget_amount,
             remaining_amount: cat.budget_amount,
-            created_at: new Date(),
             updated_at: new Date()
-          })
+          }, { onConflict: 'department_id,fiscal_year,category_code' })
           .select()
           .single();
 

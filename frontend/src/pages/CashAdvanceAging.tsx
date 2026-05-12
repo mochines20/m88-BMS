@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import toast from 'react-hot-toast';
-import { formatMoney, toNumber } from '../utils/format';
+import { formatMoney, toNumber , getErrorMessage } from '../utils/format';
 
 interface AgingItem {
   id: string;
@@ -59,7 +59,7 @@ const CashAdvanceAging = () => {
         });
         setReport(res.data);
       } catch (err: any) {
-        toast.error(err.response?.data?.error || 'Failed to load aging report');
+        toast.error(getErrorMessage(err, 'Failed to load aging report'));
       } finally {
         setLoading(false);
       }

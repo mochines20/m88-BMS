@@ -84,6 +84,25 @@ const users = [
   },
 ];
 
+const budgetCategories = [
+  { category_code: 'IT001', category_name: 'IT Equipment', budget_amount: 100000.00 },
+  { category_code: 'IT002', category_name: 'Software Licenses', budget_amount: 50000.00 },
+  { category_code: 'IT003', category_name: 'IT Services', budget_amount: 30000.00 },
+  { category_code: 'PUR001', category_name: 'Office Supplies', budget_amount: 50000.00 },
+  { category_code: 'PUR002', category_name: 'Equipment', budget_amount: 150000.00 },
+  { category_code: 'PUR003', category_name: 'Services', budget_amount: 50000.00 },
+  { category_code: 'PLAN001', category_name: 'Training', budget_amount: 50000.00 },
+  { category_code: 'PLAN002', category_name: 'Events', budget_amount: 100000.00 },
+  { category_code: 'LOG001', category_name: 'Transportation', budget_amount: 200000.00 },
+  { category_code: 'LOG002', category_name: 'Logistics Services', budget_amount: 100000.00 },
+  { category_code: 'HR001', category_name: 'Employee Benefits', budget_amount: 100000.00 },
+  { category_code: 'HR002', category_name: 'Training & Development', budget_amount: 50000.00 },
+  { category_code: 'FIN001', category_name: 'Accounting Software', budget_amount: 50000.00 },
+  { category_code: 'FIN002', category_name: 'Audit Services', budget_amount: 100000.00 },
+  { category_code: 'ADM001', category_name: 'Office Maintenance', budget_amount: 100000.00 },
+  { category_code: 'ADM002', category_name: 'Administrative Supplies', budget_amount: 50000.00 },
+];
+
 async function main() {
   console.log('Seeding Supabase using service role key...');
 
@@ -160,6 +179,47 @@ async function main() {
       console.error(`Failed to update password for ${user.email}:`, updateError);
     } else {
       console.log(`Updated password hash for ${user.email}`);
+    }
+  }
+
+  // Seed budget categories
+  const { data: existingCategories, error: fetchCatError } = await supabase
+    .from('budget_categories')
+    .select('id,department_id,fiscal_year,category_code');
+
+  if (fetchCatError && fetchCatError.code !== '42P01') {
+    console.error('Failed to read budget_categories:', fetchCatError);
+    process.exit(1);
+  }
+
+  if (!fetchCatError || fetchCatError.code !== '42P01') {
+    const existingKeys = new Set(existingCategories.map((row) => `${row.department_id}::${row.fiscal_year}::${row.category_code}`));
+    
+    const categoriesToInsert = [];
+    for (const dept of allDepartments) {
+      for (const cat of budgetCategories) {
+        const key = `${dept.id}::${fiscalYear}::${cat.category_code}`;
+        if (!existingKeys.has(key)) {
+          categoriesToInsert.push({
+            department_id: dept.id,
+            fiscal_year: fiscalYear,
+            category_code: cat.category_code,
+            category_name: cat.category_name,
+            budget_amount: cat.budget_amount,
+          });
+        }
+      }
+    }
+
+    if (categoriesToInsert.length > 0) {
+      const { error: insertCatError } = await supabase.from('budget_categories').insert(categoriesToInsert);
+      if (insertCatError) {
+        console.error('Failed to insert budget categories:', insertCatError);
+        process.exit(1);
+      }
+      console.log(`Inserted ${categoriesToInsert.length} budget categories.`);
+    } else {
+      console.log('Budget categories already exist.');
     }
   }
 

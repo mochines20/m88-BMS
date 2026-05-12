@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import toast from 'react-hot-toast';
-import { formatMoney, formatDateTime, toNumber, formatActionLabel } from '../utils/format';
+import { formatMoney, formatDateTime, toNumber, formatActionLabel , getErrorMessage } from '../utils/format';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -42,8 +42,8 @@ const AccountingDashboard = () => {
   
   // Overview data
   const [departments, setDepartments] = useState<any[]>([]);
+  const [allRequests, setAllRequests] = useState<any[]>([]);
   const [pendingReleases, setPendingReleases] = useState<any[]>([]);
-  const [recentReleases, setRecentReleases] = useState<any[]>([]);
   const [stats, setStats] = useState({
     total_pending: 0,
     total_released_today: 0,
@@ -61,7 +61,7 @@ const AccountingDashboard = () => {
   // Release Tracking
   const [selectedRequests, setSelectedRequests] = useState<Set<string>>(new Set());
   const [releaseFilter, setReleaseFilter] = useState({
-    status: 'pending_accounting',
+    status: 'all',
     date_from: '',
     date_to: ''
   });
@@ -104,15 +104,14 @@ const AccountingDashboard = () => {
   const loadAllData = async () => {
     setLoading(true);
     try {
-      await Promise.all([
+      const [depts, pending] = await Promise.all([
         fetchDepartments(),
         fetchPendingReleases(),
-        fetchRecentReleases(),
-        fetchStats(),
-        checkPettyCashAlerts(),
+        fetchAllRequests(),
         fetchReconciliationItems(),
         fetchAuditLogs()
       ]);
+      computeStats(pending, depts);
     } catch (err) {
       toast.error('Failed to load accounting data');
     } finally {
@@ -120,44 +119,42 @@ const AccountingDashboard = () => {
     }
   };
 
+  const fetchAllRequests = async () => {
+    const token = localStorage.getItem('token');
+    const res = await api.get('/api/requests', { headers: { Authorization: `Bearer ${token}` } });
+    const data = res.data || [];
+    setAllRequests(data);
+    return data;
+  };
+
   const fetchDepartments = async () => {
-    const res = await api.get('/api/auth/signup-departments');
-    setDepartments(res.data || []);
+    const token = localStorage.getItem('token');
+    const res = await api.get('/api/departments', { headers: { Authorization: `Bearer ${token}` } });
+    const data = res.data || [];
+    setDepartments(data);
+    return data;
   };
 
   const fetchPendingReleases = async () => {
     const token = localStorage.getItem('token');
-    // Fetch all requests that accounting needs to handle (both pending and on_hold)
     const res = await api.get('/api/requests', {
       headers: { Authorization: `Bearer ${token}` }
     });
-    // Filter to only show pending_accounting and on_hold statuses
-    const filtered = (res.data || []).filter((r: any) => 
-      r.status === 'pending_accounting' || r.status === 'on_hold'
-    );
-    setPendingReleases(filtered);
+    const data = res.data || [];
+    setPendingReleases(data);
+    return data.filter((r: any) => r.status === 'pending_accounting' || r.status === 'on_hold');
   };
 
-  const fetchRecentReleases = async () => {
-    const token = localStorage.getItem('token');
-    const today = new Date().toISOString().slice(0, 10);
-    const res = await api.get(`/api/requests?status=released&date_from=${today}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    setRecentReleases(res.data || []);
-  };
-
-  const fetchStats = async () => {
-    // Calculate stats from available data
+  const computeStats = (pending: any[], depts: any[]) => {
     const today = new Date().toISOString().slice(0, 10);
     const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
-    
+    const alerts = depts.filter(d => toNumber(d.petty_cash_balance) < pettyCashThreshold * 0.5).length;
     setStats({
-      total_pending: pendingReleases.length,
-      total_released_today: recentReleases.filter(r => r.released_at?.startsWith(today)).length,
-      total_released_this_month: recentReleases.filter(r => r.released_at >= firstDayOfMonth).length,
-      petty_cash_alerts: pettyCashAlerts.length,
-      on_hold_count: pendingReleases.filter(r => r.status === 'on_hold').length
+      total_pending: pending.length,
+      total_released_today: allRequests.filter(r => r.status === 'released' && r.released_at?.startsWith(today)).length,
+      total_released_this_month: allRequests.filter(r => r.status === 'released' && r.released_at >= firstDayOfMonth).length,
+      petty_cash_alerts: alerts,
+      on_hold_count: pending.filter(r => r.status === 'on_hold').length
     });
   };
 
@@ -201,21 +198,23 @@ const AccountingDashboard = () => {
 
   const fetchReconciliationItems = async () => {
     const token = localStorage.getItem('token');
-    const res = await api.get('/api/requests?status=released', {
+    const res = await api.get('/api/requests', {
       headers: { Authorization: `Bearer ${token}` }
     });
     
-    const items: ReconciliationItem[] = (res.data || []).map((req: any) => ({
-      id: req.id,
-      request_code: req.request_code,
-      amount: toNumber(req.amount),
-      status: req.status,
-      released_at: req.released_at,
-      release_method: req.release_method,
-      release_reference_no: req.release_reference_no,
-      reconciled: req.reconciled || false,
-      discrepancy_note: req.discrepancy_note
-    }));
+    const items: ReconciliationItem[] = (res.data || [])
+      .filter((req: any) => req.status === 'released')
+      .map((req: any) => ({
+        id: req.id,
+        request_code: req.request_code,
+        amount: toNumber(req.amount),
+        status: req.status,
+        released_at: req.released_at,
+        release_method: req.release_method,
+        release_reference_no: req.release_reference_no,
+        reconciled: req.reconciled || false,
+        discrepancy_note: req.discrepancy_note
+      }));
     
     setReconciliationItems(items);
   };
@@ -270,7 +269,7 @@ const AccountingDashboard = () => {
       setSelectedRequests(new Set());
       loadAllData();
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to batch release');
+      toast.error(getErrorMessage(err, 'Failed to batch release'));
     } finally {
       setIsBatchReleasing(false);
     }
@@ -286,7 +285,7 @@ const AccountingDashboard = () => {
       toast.success(newStatus === 'on_hold' ? 'Request placed On Hold' : 'Request removed from On Hold');
       loadAllData(); // Refresh all data
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to toggle hold status');
+      toast.error(getErrorMessage(err, 'Failed to toggle hold status'));
     }
   };
 
@@ -313,7 +312,7 @@ const AccountingDashboard = () => {
       toast.success(reconciled ? 'Marked as reconciled' : 'Reconciliation removed');
       fetchReconciliationItems();
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to update reconciliation');
+      toast.error(getErrorMessage(err, 'Failed to update reconciliation'));
     }
   };
 
@@ -347,17 +346,17 @@ const AccountingDashboard = () => {
   };
 
   const filteredReleases = useMemo(() => {
+    const accountingStatuses = ['pending_accounting', 'on_hold', 'released'];
     return pendingReleases.filter(req => {
-      // Handle On Hold filter
-      if (releaseFilter.status === 'on_hold') {
-        return req.status === 'on_hold';
-      }
-      // Exclude on-hold requests from other filters
-      if (req.status === 'on_hold') return false;
-      
+      // Only show requests relevant to accounting
+      if (!accountingStatuses.includes(req.status)) return false;
+
       if (releaseFilter.status !== 'all' && req.status !== releaseFilter.status) return false;
-      if (releaseFilter.date_from && req.submitted_at < releaseFilter.date_from) return false;
-      if (releaseFilter.date_to && req.submitted_at > releaseFilter.date_to) return false;
+
+      // Use released_at for released requests, submitted_at otherwise
+      const dateRef = req.status === 'released' ? req.released_at : req.submitted_at;
+      if (releaseFilter.date_from && dateRef < releaseFilter.date_from) return false;
+      if (releaseFilter.date_to && dateRef > releaseFilter.date_to) return false;
       return true;
     });
   }, [pendingReleases, releaseFilter]);
@@ -396,12 +395,6 @@ const AccountingDashboard = () => {
 
   return (
     <div className="text-[var(--role-text)] page-transition">
-      {/* Header */}
-      <div className="page-header">
-        <h1 className="page-title">Accounting Control Center</h1>
-        <p className="page-subtitle">Manage fund releases, petty cash, reconciliation, and audit trails.</p>
-      </div>
-
       {/* Tab Navigation */}
       <div className="mb-6 flex flex-wrap gap-2">
         {[
@@ -433,84 +426,80 @@ const AccountingDashboard = () => {
       </div>
 
       {/* OVERVIEW TAB */}
-      {activeTab === 'overview' && (
+      {activeTab === 'overview' && (() => {
+        const currentFY = new Date().getFullYear();
+        const fyDepts = departments.filter(d => Number(d.fiscal_year) === currentFY && !/^m88/i.test(d.name || ''));
+        return (
         <div className="space-y-6 animate-fade-in-up">
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
-            <div className="panel card-lift">
-              <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/60">Pending Releases</p>
-              <p className="mt-2 text-3xl font-bold text-[var(--role-text)]">{stats.total_pending}</p>
-              <p className="mt-1 text-sm text-[var(--role-text)]/60">Requests awaiting release</p>
+          {/* Summary Stats */}
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div className="panel !p-4">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-[var(--role-text)]/50">Active Tickets</p>
+              <p className="mt-2 text-3xl font-bold text-[var(--role-text)]">{allRequests.filter(r => !['released', 'rejected'].includes(r.status)).length}</p>
+              <p className="mt-1 text-xs text-[var(--role-text)]/50">In pipeline right now</p>
             </div>
-            <div className="panel card-lift">
-              <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/60">On Hold</p>
-              <p className={`mt-2 text-3xl font-bold ${stats.on_hold_count > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                {stats.on_hold_count}
-              </p>
-              <p className="mt-1 text-sm text-[var(--role-text)]/60">Requests temporarily held</p>
+            <div className="panel !p-4">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-[var(--role-text)]/50">For Disbursement</p>
+              <p className={`mt-2 text-3xl font-bold ${stats.total_pending > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{stats.total_pending}</p>
+              <p className="mt-1 text-xs text-[var(--role-text)]/50">Awaiting your release</p>
             </div>
-            <div className="panel card-lift">
-              <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/60">Released Today</p>
-              <p className="mt-2 text-3xl font-bold text-emerald-600">{stats.total_released_today}</p>
-              <p className="mt-1 text-sm text-[var(--role-text)]/60">Today's processed releases</p>
-            </div>
-            <div className="panel card-lift">
-              <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/60">Released This Month</p>
+            <div className="panel !p-4">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-[var(--role-text)]/50">Released This Month</p>
               <p className="mt-2 text-3xl font-bold text-[var(--role-primary)]">{stats.total_released_this_month}</p>
-              <p className="mt-1 text-sm text-[var(--role-text)]/60">Monthly total</p>
+              <p className="mt-1 text-xs text-[var(--role-text)]/50">Processed disbursements</p>
             </div>
-            <div className="panel card-lift">
-              <p className="text-xs uppercase tracking-[0.14em] text-[var(--role-text)]/60">Petty Cash Alerts</p>
-              <p className={`mt-2 text-3xl font-bold ${stats.petty_cash_alerts > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                {stats.petty_cash_alerts}
-              </p>
-              <p className="mt-1 text-sm text-[var(--role-text)]/60">Departments need attention</p>
+            <div className="panel !p-4">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-[var(--role-text)]/50">On Hold</p>
+              <p className={`mt-2 text-3xl font-bold ${stats.on_hold_count > 0 ? 'text-red-600' : 'text-emerald-600'}`}>{stats.on_hold_count}</p>
+              <p className="mt-1 text-xs text-[var(--role-text)]/50">Temporarily held</p>
             </div>
           </div>
 
-          {/* Quick Actions */}
-          <div className="panel">
-            <h3 className="text-lg font-semibold mb-4">Quick Actions</h3>
-            <div className="flex flex-wrap gap-3">
-              <button onClick={() => setActiveTab('releases')} className="btn-primary">
-                View Pending Releases
-              </button>
-              <button onClick={() => setActiveTab('petty_cash')} className="btn-secondary">
-                Check Petty Cash
-              </button>
-              <button onClick={() => setActiveTab('reconciliation')} className="btn-secondary">
-                Reconcile Releases
-              </button>
-              <button onClick={loadAllData} className="btn-secondary">
-                Refresh All Data
-              </button>
-            </div>
-          </div>
 
-          {/* Recent Activity */}
+          {/* Department Budget Remaining */}
           <div className="panel">
-            <h3 className="text-lg font-semibold mb-4">Recent Releases (Today)</h3>
-            {recentReleases.length === 0 ? (
-              <p className="text-[var(--role-text)]/60">No releases today yet.</p>
+            <h3 className="text-lg font-bold text-[var(--role-text)] mb-4">Department Budget Remaining — FY {currentFY}</h3>
+            {fyDepts.length === 0 ? (
+              <p className="text-center py-6 text-sm text-[var(--role-text)]/50">No departments found for FY {currentFY}.</p>
             ) : (
               <div className="space-y-3">
-                {recentReleases.slice(0, 5).map(release => (
-                  <div key={release.id} className="flex items-center justify-between p-3 rounded-xl border border-[var(--role-border)] bg-[var(--role-accent)]">
-                    <div>
-                      <p className="font-medium">{release.request_code}</p>
-                      <p className="text-sm text-[var(--role-text)]/60">{release.item_name}</p>
+                {fyDepts.map(dept => {
+                  const annual = toNumber(dept.annual_budget);
+                  const used = toNumber(dept.used_budget);
+                  const remaining = Math.max(0, annual - used);
+                  const pct = annual > 0 ? Math.min(100, (used / annual) * 100) : 0;
+                  const isCritical = pct >= 90;
+                  const isHigh = pct >= 70;
+                  return (
+                    <div key={dept.id} className="rounded-2xl border border-[var(--role-border)] bg-[var(--role-accent)] p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="font-semibold text-sm text-[var(--role-text)]">{dept.name}</p>
+                        <div className="flex items-center gap-3">
+                          <span className={`text-xs font-semibold ${isCritical ? 'text-red-600' : isHigh ? 'text-amber-600' : 'text-emerald-600'}`}>
+                            {pct.toFixed(1)}% used
+                          </span>
+                          <span className="text-sm font-bold text-[var(--role-text)]">{formatMoney(remaining)} left</span>
+                        </div>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-[var(--role-border)]">
+                        <div
+                          className={`h-full rounded-full transition-all ${isCritical ? 'bg-red-500' : isHigh ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <div className="mt-1.5 flex justify-between text-xs text-[var(--role-text)]/50">
+                        <span>Used: {formatMoney(used)}</span>
+                        <span>Total: {formatMoney(annual)}</span>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <p className="font-semibold">{formatMoney(toNumber(release.amount))}</p>
-                      <p className="text-xs text-[var(--role-text)]/60">{formatDateTime(release.released_at)}</p>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* PETTY CASH TAB */}
       {activeTab === 'petty_cash' && (
@@ -558,9 +547,11 @@ const AccountingDashboard = () => {
                   }}
                 >
                   <option value="">Select Department</option>
-                  {departments.map(dept => (
-                    <option key={dept.id} value={dept.id}>{dept.name}</option>
-                  ))}
+                  {departments
+                    .filter(dept => Number(dept.fiscal_year) === new Date().getFullYear())
+                    .map(dept => (
+                      <option key={dept.id} value={dept.id}>{dept.name}</option>
+                    ))}
                 </select>
                 <button 
                   onClick={() => selectedDeptForPetty && fetchPettyCashHistory(selectedDeptForPetty)}
@@ -724,7 +715,7 @@ const AccountingDashboard = () => {
                 />
               </div>
               <button 
-                onClick={() => setReleaseFilter({ status: 'pending_accounting', date_from: '', date_to: '' })}
+                onClick={() => setReleaseFilter({ status: 'all', date_from: '', date_to: '' })}
                 className="btn-secondary"
               >
                 Reset Filters

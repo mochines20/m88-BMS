@@ -77,6 +77,9 @@ CREATE TABLE IF NOT EXISTS expense_requests (
   rejection_stage TEXT CHECK (rejection_stage IN ('supervisor', 'accounting')),
   on_hold_at TIMESTAMP,
   on_hold_by UUID REFERENCES users(id),
+  co_approved_by UUID REFERENCES users(id),
+  co_approved_at TIMESTAMP,
+  co_approver_role TEXT,
   submitted_at TIMESTAMP,
   updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -110,6 +113,20 @@ BEGIN
   ) THEN
     ALTER TABLE expense_requests
       ADD CONSTRAINT fk_expense_requests_returned_by FOREIGN KEY (returned_by) REFERENCES users(id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'fk_expense_requests_on_hold_by'
+  ) THEN
+    ALTER TABLE expense_requests
+      ADD CONSTRAINT fk_expense_requests_on_hold_by FOREIGN KEY (on_hold_by) REFERENCES users(id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'fk_expense_requests_co_approved_by'
+  ) THEN
+    ALTER TABLE expense_requests
+      ADD CONSTRAINT fk_expense_requests_co_approved_by FOREIGN KEY (co_approved_by) REFERENCES users(id);
   END IF;
 END $$;
 

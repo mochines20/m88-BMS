@@ -24,7 +24,6 @@ router.post('/disburse', authenticate, authorize('accounting', 'admin'), async (
   const { department_id, amount, purpose, reference_request_id } = req.body;
   const normalizedPurpose = String(purpose || '').trim();
   const normalizedAmount = toNumber(amount);
-  const { data: dept } = await supabase.from('departments').select('*').eq('id', department_id).single();
   if (!department_id) {
     return res.status(400).json({ error: 'Department is required' });
   }
@@ -34,6 +33,7 @@ router.post('/disburse', authenticate, authorize('accounting', 'admin'), async (
   if (normalizedAmount <= 0) {
     return res.status(400).json({ error: 'Amount must be greater than zero' });
   }
+  const { data: dept } = await supabase.from('departments').select('*').eq('id', department_id).single();
   if (!dept) {
     return res.status(404).json({ error: 'Department not found' });
   }
@@ -73,6 +73,11 @@ router.post('/replenish', authenticate, authorize('accounting', 'admin'), async 
   if (normalizedAmount <= 0) {
     return res.status(400).json({ error: 'Amount must be greater than zero' });
   }
+  // Validate dept exists BEFORE inserting the transaction
+  const { data: dept } = await supabase.from('departments').select('*').eq('id', department_id).single();
+  if (!dept) {
+    return res.status(404).json({ error: 'Department not found' });
+  }
   const { data, error } = await supabase
     .from('petty_cash_transactions')
     .insert({
@@ -86,11 +91,6 @@ router.post('/replenish', authenticate, authorize('accounting', 'admin'), async 
     .select()
     .single();
   if (error) return res.status(400).json({ error });
-  // Add to petty cash
-  const { data: dept } = await supabase.from('departments').select('*').eq('id', department_id).single();
-  if (!dept) {
-    return res.status(404).json({ error: 'Department not found' });
-  }
   await supabase.from('departments').update({ petty_cash_balance: toNumber(dept.petty_cash_balance) + normalizedAmount }).eq('id', dept.id);
   res.json(data);
 });

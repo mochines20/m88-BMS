@@ -1,20 +1,23 @@
 import { Router } from 'express';
+import fs from 'fs';
+import path from 'path';
 import { supabase } from '../utils/supabase';
 import { authenticate, authorize } from '../middleware/auth';
 import { getLatestConfiguredFiscalYear } from '../utils/fiscal';
+import { validateExpense } from '../utils/expenseValidator';
 
 const router = Router();
 
 // GET /api/cash-advances - List cash advances
 router.get('/', authenticate, async (req: any, res) => {
   try {
-    const { status, employee_id, overdue_only } = req.query;
+    const { status, employee_id, overdue_only, status_in } = req.query;
 
     let query = supabase
       .from('cash_advances')
       .select(`
         *,
-        employee:users(id, name, email),
+        employee:users!cash_advances_employee_id_fkey(id, name, email),
         department:departments(id, name),
         issuer:users!cash_advances_issued_by_fkey(id, name)
       `)
@@ -23,6 +26,9 @@ router.get('/', authenticate, async (req: any, res) => {
     // Filter by status
     if (status) {
       query = query.eq('status', status);
+    } else if (req.query.status_in) {
+      const statuses = (req.query.status_in as string).split(',');
+      query = query.in('status', statuses);
     }
 
     // Filter by employee (for non-finance users, only show own)
@@ -53,7 +59,7 @@ router.get('/aging', authenticate, authorize('accounting', 'admin', 'super_admin
       .from('cash_advances')
       .select(`
         *,
-        employee:users(id, name, email, department_id),
+        employee:users!cash_advances_employee_id_fkey(id, name, email, department_id),
         department:departments(id, name)
       `)
       .in('status', ['outstanding', 'partially_liquidated', 'overdue'])
@@ -128,10 +134,10 @@ router.get('/:id', authenticate, async (req: any, res) => {
       .from('cash_advances')
       .select(`
         *,
-        employee:users(id, name, email),
+        employee:users!cash_advances_employee_id_fkey(id, name, email),
         department:departments(id, name),
         issuer:users!cash_advances_issued_by_fkey(id, name),
-        original_request:expense_requests(id, request_code, status)
+        original_request:expense_requests!cash_advances_request_id_fkey(id, request_code, status)
       `)
       .eq('id', id)
       .single();
@@ -140,6 +146,13 @@ router.get('/:id', authenticate, async (req: any, res) => {
     if (!cashAdvance) {
       return res.status(404).json({ error: 'Cash advance not found' });
     }
+
+    // Get liquidations separately since there's no direct FK relationship
+    const { data: liquidations } = await supabase
+      .from('request_liquidations')
+      .select('*')
+      .eq('request_id', cashAdvance.request_id)
+      .order('created_at', { ascending: false });
 
     // Check permission
     if ((req.user.role === 'employee' || req.user.role === 'manager') && cashAdvance.employee_id !== req.user.id) {
@@ -160,7 +173,8 @@ router.get('/:id', authenticate, async (req: any, res) => {
 
     res.json({
       ...cashAdvance,
-      liquidation_items: items || []
+      liquidation_items: items || [],
+      liquidations: liquidations || []
     });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -247,6 +261,21 @@ router.post('/:id/liquidate', authenticate, authorize('employee', 'manager', 'ac
       return res.status(403).json({ error: 'Forbidden' });
     }
 
+    // Get department name for validation
+    const { data: deptData } = await supabase.from('departments').select('name').eq('id', cashAdvance.department_id).single();
+    const departmentName = deptData?.name || 'Unknown';
+
+    // Validate all items against the official list
+    for (const item of items) {
+      const validation = validateExpense(item.description, departmentName, 'reimbursement');
+      if (!validation.allowed) {
+        return res.status(400).json({ 
+          error: `Item "${item.description}" is not allowed: ${validation.reason}`,
+          details: validation
+        });
+      }
+    }
+
     // Insert liquidation items
     const itemsToInsert = items.map((item: any) => ({
       cash_advance_id: id,
@@ -328,6 +357,46 @@ router.get('/for-liquidation/:employee_id', authenticate, async (req: any, res) 
     if (error) throw error;
 
     res.json(data || []);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/cash-advances/:id/submit-liquidation - Mark for accounting review
+router.post('/:id/submit-liquidation', authenticate, authorize('employee', 'manager', 'supervisor', 'accounting'), async (req: any, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get current CA to validate ownership and balance
+    const { data: ca, error: caFetchError } = await supabase
+      .from('cash_advances')
+      .select('id, employee_id, balance')
+      .eq('id', id)
+      .single();
+
+    if (caFetchError || !ca) return res.status(404).json({ error: 'Cash advance not found' });
+
+    // Employee/manager can only submit their own; supervisor/accounting can submit for anyone
+    const trustedRoles = ['supervisor', 'accounting', 'admin', 'super_admin'];
+    if (!trustedRoles.includes(req.user.role) && ca.employee_id !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden: you do not own this cash advance' });
+    }
+
+    const newStatus = (Number(ca.balance) <= 0) ? 'fully_liquidated' : 'partially_liquidated';
+
+    const { data, error } = await supabase
+      .from('cash_advances')
+      .update({ 
+        status: newStatus,
+        updated_at: new Date()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json(data);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
